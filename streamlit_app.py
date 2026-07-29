@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from item_auction import AscendingAuctionDuel  # noqa: E402
+from item_auction.rl import TrainingHistory  # noqa: E402
 
 
 BUDGET = 500
@@ -17,6 +18,7 @@ POOL_SIZE = 20
 HUMAN = "You"
 BOT = "Random Bot"
 GAME_VERSION = 4
+TRAINING_HISTORY_PATH = ROOT / "data" / "training_history.sqlite3"
 
 st.set_page_config(
     page_title="Auction",
@@ -187,7 +189,9 @@ env = duel.env
 result = st.session_state.game_result
 completed = len(env.history)
 
-play_tab, history_tab, rules_tab = st.tabs(["Draft", "History", "Rules"])
+play_tab, history_tab, training_tab, rules_tab = st.tabs(
+    ["Draft", "Game history", "Training", "Rules"]
+)
 
 with play_tab:
     metrics = st.columns(4)
@@ -340,6 +344,169 @@ with history_tab:
         st.dataframe(rows, use_container_width=True, hide_index=True, height=520)
     else:
         st.info("No completed auctions yet.")
+
+with training_tab:
+    st.markdown("#### Baseline training history")
+    st.caption(
+        "Checkpoint evaluations against the four structured baseline bots. "
+        "The pure-random bot is excluded."
+    )
+    training_history = TrainingHistory(TRAINING_HISTORY_PATH)
+    runs = training_history.runs()
+    if not runs:
+        st.info(
+            "No training runs yet. Start one with "
+            "`item-auction-train-baseline --timesteps 100000`."
+        )
+    else:
+        run_labels = {
+            (
+                f"{run['created_at'][:19].replace('T', ' ')} · "
+                f"{run['algorithm']} · {run['status']} · {run['id']}"
+            ): run["id"]
+            for run in runs
+        }
+        selected_run_label = st.selectbox("Training run", list(run_labels))
+        selected_run = run_labels[selected_run_label]
+        checkpoints = training_history.checkpoints(selected_run)
+        if not checkpoints:
+            st.warning("This run has not completed its first evaluation yet.")
+        else:
+            selected_checkpoint = st.select_slider(
+                "Checkpoint steps",
+                options=checkpoints,
+                value=checkpoints[-1],
+                format_func=lambda value: f"{value:,}",
+            )
+            summary = training_history.player_summary(
+                selected_run, selected_checkpoint
+            )
+            learner_rows = [row for row in summary if row["role"] == "learner"]
+            total_games = sum(row["games"] for row in learner_rows)
+            if learner_rows:
+                weighted = lambda field: sum(
+                    row[field] * row["games"] for row in learner_rows
+                ) / max(1, total_games)
+                summary_metrics = st.columns(4)
+                summary_metrics[0].metric("Evaluation games", f"{total_games:,}")
+                summary_metrics[1].metric(
+                    "RL win credit", f"{weighted('win_credit_pct'):.1f}%"
+                )
+                summary_metrics[2].metric(
+                    "RL average score", f"{weighted('avg_score'):.1f}"
+                )
+                summary_metrics[3].metric(
+                    "RL average budget used",
+                    f"${weighted('avg_budget_used'):.1f}",
+                )
+
+            st.markdown("##### Player results by opponent")
+            st.dataframe(
+                summary,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "opponent": "Opponent",
+                    "role": "Role",
+                    "player": "Player",
+                    "games": "Games",
+                    "avg_score": "Avg score",
+                    "avg_items": "Avg items drafted",
+                    "avg_budget_used": "Avg budget used",
+                    "avg_budget_remaining": "Avg budget left",
+                    "win_credit_pct": "Win credit %",
+                },
+            )
+
+            progress = training_history.progress(selected_run)
+            if progress:
+                import pandas as pd
+
+                progress_frame = pd.DataFrame(progress)
+                win_progress = progress_frame.pivot(
+                    index="checkpoint_steps",
+                    columns="opponent",
+                    values="win_credit_pct",
+                )
+                score_progress = progress_frame.pivot(
+                    index="checkpoint_steps",
+                    columns="opponent",
+                    values="avg_score",
+                )
+                chart_columns = st.columns(2)
+                with chart_columns[0]:
+                    st.markdown("##### Win credit over training")
+                    st.line_chart(
+                        win_progress,
+                        x_label="Training steps",
+                        y_label="Win credit %",
+                    )
+                with chart_columns[1]:
+                    st.markdown("##### Average score over training")
+                    st.line_chart(
+                        score_progress,
+                        x_label="Training steps",
+                        y_label="Average score",
+                    )
+
+            st.markdown("##### Price and ownership by rating range")
+            rating_rows = training_history.rating_summary(
+                selected_run, selected_checkpoint
+            )
+            st.dataframe(
+                rating_rows,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "opponent": "Opponent",
+                    "rating_band": "Rating range",
+                    "items": "Items shown",
+                    "avg_final_bid": "Avg final bid",
+                    "learner_won": "RL Bot won",
+                    "opponent_won": "Opponent won",
+                    "unsold": "Unsold",
+                },
+            )
+
+            st.markdown("##### Individual selections")
+            opponents = sorted({row["opponent"] for row in summary})
+            opponent_filter = st.selectbox(
+                "Opponent filter",
+                ["All opponents", *opponents],
+            )
+            selection_rows = training_history.selections(
+                selected_run,
+                selected_checkpoint,
+                opponent=(
+                    None
+                    if opponent_filter == "All opponents"
+                    else opponent_filter
+                ),
+            )
+            st.dataframe(
+                selection_rows,
+                use_container_width=True,
+                hide_index=True,
+                height=520,
+                column_config={
+                    "episode": "Game",
+                    "seed": "Seed",
+                    "opponent": "Opponent",
+                    "auction_number": "Auction",
+                    "item_name": "Item",
+                    "rating": "Rating",
+                    "rating_band": "Range",
+                    "final_bid": "Final bid",
+                    "winner": "Winner",
+                    "learner_final_offer": "RL final offer",
+                    "opponent_final_offer": "Opponent final offer",
+                },
+            )
+            if len(selection_rows) == 5_000:
+                st.caption(
+                    "Showing the first 5,000 selections for this filter. "
+                    "All rows remain stored in the SQLite history database."
+                )
 
 with rules_tab:
     st.markdown(

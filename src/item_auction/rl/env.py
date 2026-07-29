@@ -347,5 +347,10 @@ class FixedOpponentEnv(gym.Env):
         }
         return observation, reward, terminated, False, info
 
+    def action_masks(self) -> np.ndarray:
+        """Expose legal actions in the form expected by MaskablePPO."""
+
+        return self.aec.action_mask(self.learner_agent)
+
     def render(self):
         return self.aec.render()

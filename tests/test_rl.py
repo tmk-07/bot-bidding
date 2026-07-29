@@ -4,6 +4,7 @@ import numpy as np
 from gymnasium.utils.env_checker import check_env
 from pettingzoo.test import api_test
 
+from item_auction.core import AuctionEngine
 from item_auction.rl import (
     ACTION_COUNT,
     AggressiveHighValuePolicy,
@@ -16,8 +17,10 @@ from item_auction.rl import (
     OpponentPool,
     RandomPassPolicy,
     RatingNoisePolicy,
+    TrainingHistory,
     action_to_bid,
     legal_action_mask,
+    rating_band,
 )
 
 
@@ -108,6 +111,54 @@ def test_future_checkpoint_can_join_opponent_pool_through_adapter() -> None:
         pool.sample(random.Random(seed)).name for seed in range(100)
     }
     assert "checkpoint-v1" in sampled_names
+
+
+def test_training_pool_excludes_pure_random_policy() -> None:
+    names = {entry.name for entry in OpponentPool.training_baselines().entries}
+    assert names == {
+        "rating-noise",
+        "budget-proportion",
+        "aggressive-high-value",
+        "deal-probability",
+    }
+
+
+def test_training_history_records_players_and_every_selection(tmp_path) -> None:
+    history = TrainingHistory(tmp_path / "history.sqlite3")
+    run_id = history.create_run(
+        algorithm="test",
+        total_timesteps=10,
+        seed=5,
+        config={"purpose": "test"},
+    )
+    engine = AuctionEngine(pool_size=2)
+    engine.reset(seed=42)
+    engine.place_bid("player_0", 12)
+    engine.pass_turn("player_1")
+    engine.pass_turn("player_1")
+    engine.place_bid("player_0", 7)
+    engine.pass_turn("player_1")
+    assert engine.done
+
+    history.record_game(
+        run_id=run_id,
+        checkpoint_steps=10,
+        episode=0,
+        seed=42,
+        opponent_name="rating-noise",
+        learner_agent="player_0",
+        engine=engine,
+    )
+    summary = history.player_summary(run_id, 10)
+    selections = history.selections(run_id, 10)
+    ratings = history.rating_summary(run_id, 10)
+
+    assert len(summary) == 2
+    assert len(selections) == 2
+    assert sum(row["items"] for row in ratings) == 2
+    assert selections[0]["winner"] in {"RL Bot", "rating-noise", "Unsold"}
+    assert rating_band(100) == "100"
+    assert rating_band(9) == "1-9"
 
 
 def test_observation_contains_current_state_but_not_future_pool() -> None:

@@ -214,3 +214,16 @@ class OpponentPool:
                 OpponentEntry("deal-probability", DealProbabilityPolicy),
             ]
         )
+
+    @classmethod
+    def training_baselines(cls) -> OpponentPool:
+        """Baseline curriculum without the deliberately unstructured random bot."""
+
+        return cls(
+            [
+                OpponentEntry("rating-noise", RatingNoisePolicy),
+                OpponentEntry("budget-proportion", BudgetProportionPolicy),
+                OpponentEntry("aggressive-high-value", AggressiveHighValuePolicy),
+                OpponentEntry("deal-probability", DealProbabilityPolicy),
+            ]
+        )

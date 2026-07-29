@@ -1,8 +1,8 @@
 # Item Auction
 
-A fast simulation environment for training bots to draft a team of **5 items**
-with a **$250 budget**. Items have values from 1–100 and are revealed one at a
-time, so agents cannot inspect the future pool.
+A sequential auction environment for training bots to divide a pool of **20
+items** with **$500 per player**. Items have ratings from 1–100 and are revealed
+one at a time, so agents cannot inspect the future pool.
 
 Each bot submits its maximum bid for the current item. The highest bidder wins
 and pays one more than the second-highest bid (up to its own bid), which
@@ -80,7 +80,33 @@ pool.add(
 ```
 
 See [`examples/rl_environment.py`](examples/rl_environment.py) for a complete
-untrained episode. No RL model or training loop is included yet.
+environment-only episode.
+
+## Baseline RL training
+
+Install the training dependencies:
+
+```bash
+pip install -e '.[ui,train,dev]'
+```
+
+Train MaskablePPO against the four structured opponents. The deliberately
+unstructured `RandomPassPolicy` is not part of this curriculum:
+
+```bash
+item-auction-train-baseline \
+  --timesteps 100000 \
+  --eval-interval 25000 \
+  --eval-episodes 100 \
+  --environments 8
+```
+
+The model is saved under `models/`. Periodic held-out evaluation results are
+written to `data/training_history.sqlite3`. The Training tab in Streamlit shows
+checkpoint progress, average score, items drafted, budget used, rating-band
+prices and ownership, plus every individual evaluation selection. Training
+rollout transitions are intentionally not written to SQLite because synchronous
+disk writes would substantially slow PPO.
 
 ## Command-line quick start
 
