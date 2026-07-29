@@ -135,9 +135,8 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
     engine.reset(seed=42)
     engine.place_bid("player_0", 12)
     engine.pass_turn("player_1")
-    engine.pass_turn("player_1")
-    engine.place_bid("player_0", 7)
-    engine.pass_turn("player_1")
+    engine.place_bid("player_1", 7)
+    engine.pass_turn("player_0")
     assert engine.done
 
     history.record_game(
@@ -179,6 +178,9 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
             "action_pct": 100.0,
         }
     ]
+    curve = history.bid_curve(run_id)
+    assert len(curve) == 2
+    assert sum(row["stop_samples"] for row in curve) == 1
 
 
 def test_observation_contains_current_state_but_not_future_pool() -> None:

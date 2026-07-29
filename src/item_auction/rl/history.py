@@ -457,3 +457,49 @@ class TrainingHistory:
                 (run_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def bid_curve(
+        self,
+        run_id: str,
+        *,
+        opponent: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Observed learner offers by exact rating and checkpoint.
+
+        ``avg_stop_offer`` only uses auctions won by the opponent, which means
+        the learner eventually chose to pass. It is therefore the closest
+        observable proxy for a maximum willingness to pay.
+        """
+
+        opponent_clause = ""
+        parameters: list[Any] = [run_id]
+        if opponent:
+            opponent_clause = "AND g.opponent_name = ?"
+            parameters.append(opponent)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT g.checkpoint_steps,
+                       CAST(s.rating AS INTEGER) AS rating,
+                       COUNT(*) AS items,
+                       ROUND(AVG(s.learner_final_offer), 2)
+                           AS avg_final_offer,
+                       ROUND(AVG(
+                           CASE WHEN s.winner_role = 'opponent'
+                                THEN s.learner_final_offer END
+                       ), 2) AS avg_stop_offer,
+                       SUM(s.winner_role = 'opponent') AS stop_samples,
+                       ROUND(100.0 * AVG(
+                           CASE WHEN s.winner_role = 'learner'
+                                THEN 1.0 ELSE 0.0 END
+                       ), 1) AS learner_win_pct
+                FROM selections s
+                JOIN evaluation_games g ON g.id = s.game_id
+                WHERE g.run_id = ?
+                  {opponent_clause}
+                GROUP BY g.checkpoint_steps, CAST(s.rating AS INTEGER)
+                ORDER BY g.checkpoint_steps, rating
+                """,
+                parameters,
+            ).fetchall()
+        return [dict(row) for row in rows]

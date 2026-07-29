@@ -523,6 +523,101 @@ with training_tab:
                     "Share of decisions %",
                 )
 
+            st.markdown("##### RL willingness to pay over training")
+            st.caption(
+                "The bot has no fixed maximum-bid formula. This estimates its "
+                "learned stopping behavior from completed evaluation auctions."
+            )
+            curve_opponents = sorted(
+                {row["opponent"] for row in summary}
+            )
+            curve_controls = st.columns(2)
+            with curve_controls[0]:
+                curve_opponent = st.selectbox(
+                    "Curve opponent",
+                    ["All opponents", *curve_opponents],
+                )
+            with curve_controls[1]:
+                curve_measure = st.selectbox(
+                    "Curve measure",
+                    ["Offer before passing", "Observed final offer"],
+                )
+            bid_curve_rows = training_history.bid_curve(
+                selected_run,
+                opponent=(
+                    None
+                    if curve_opponent == "All opponents"
+                    else curve_opponent
+                ),
+            )
+            if bid_curve_rows:
+                bid_curve_frame = pd.DataFrame(bid_curve_rows)
+                measure_field = (
+                    "avg_stop_offer"
+                    if curve_measure == "Offer before passing"
+                    else "avg_final_offer"
+                )
+                measure_label = (
+                    "Average offer before passing"
+                    if curve_measure == "Offer before passing"
+                    else "Average observed final offer"
+                )
+                curve_chart = (
+                    alt.Chart(bid_curve_frame.dropna(subset=[measure_field]))
+                    .mark_line(point=False)
+                    .encode(
+                        x=alt.X(
+                            "rating:Q",
+                            title="Item rating",
+                            scale=alt.Scale(
+                                domain=[0, 100],
+                                nice=False,
+                            ),
+                        ),
+                        y=alt.Y(
+                            f"{measure_field}:Q",
+                            title=measure_label,
+                            scale=alt.Scale(zero=True),
+                        ),
+                        color=alt.Color(
+                            "checkpoint_steps:O",
+                            title="Checkpoint",
+                            sort="ascending",
+                        ),
+                        tooltip=[
+                            alt.Tooltip(
+                                "checkpoint_steps:Q",
+                                title="Training steps",
+                                format=",",
+                            ),
+                            alt.Tooltip("rating:Q", title="Rating"),
+                            alt.Tooltip(
+                                f"{measure_field}:Q",
+                                title=measure_label,
+                                format=".2f",
+                            ),
+                            alt.Tooltip("items:Q", title="Items evaluated"),
+                            alt.Tooltip(
+                                "stop_samples:Q",
+                                title="Pass samples",
+                            ),
+                            alt.Tooltip(
+                                "learner_win_pct:Q",
+                                title="RL won %",
+                                format=".1f",
+                            ),
+                        ],
+                    )
+                    .properties(height=340)
+                )
+                st.altair_chart(curve_chart, use_container_width=True)
+                if curve_measure == "Offer before passing":
+                    st.caption(
+                        "This uses items the opponent won, meaning the RL bot "
+                        "eventually passed. Winning items end before revealing "
+                        "the bot's true stopping point."
+                    )
+
             st.markdown("##### Price and ownership by rating range")
             rating_rows = training_history.rating_summary(
                 selected_run, selected_checkpoint
