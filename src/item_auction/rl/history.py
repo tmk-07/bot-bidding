@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS learner_actions (
     PRIMARY KEY (game_id, decision_number)
 );
 
+CREATE TABLE IF NOT EXISTS training_exposure (
+    run_id TEXT NOT NULL REFERENCES training_runs(id),
+    opponent_name TEXT NOT NULL,
+    episodes INTEGER NOT NULL,
+    PRIMARY KEY (run_id, opponent_name)
+);
+
 CREATE INDEX IF NOT EXISTS idx_games_run_checkpoint
     ON evaluation_games(run_id, checkpoint_steps);
 CREATE INDEX IF NOT EXISTS idx_games_opponent
@@ -162,6 +169,43 @@ class TrainingHistory:
                 """,
                 (datetime.now(UTC).isoformat(), status, model_path, run_id),
             )
+
+    def record_training_exposure(
+        self,
+        run_id: str,
+        episodes_by_opponent: dict[str, int],
+    ) -> None:
+        with self.connect() as connection:
+            for opponent_name, episodes in episodes_by_opponent.items():
+                connection.execute(
+                    """
+                    INSERT INTO training_exposure (
+                        run_id, opponent_name, episodes
+                    ) VALUES (?, ?, ?)
+                    ON CONFLICT(run_id, opponent_name)
+                    DO UPDATE SET episodes = excluded.episodes
+                    """,
+                    (run_id, opponent_name, int(episodes)),
+                )
+
+    def training_exposure(self, run_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT opponent_name AS opponent,
+                       episodes AS training_matches,
+                       ROUND(
+                           100.0 * episodes /
+                           SUM(episodes) OVER (),
+                           2
+                       ) AS actual_share_pct
+                FROM training_exposure
+                WHERE run_id = ?
+                ORDER BY episodes DESC, opponent_name
+                """,
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def record_game(
         self,

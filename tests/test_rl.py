@@ -184,6 +184,16 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
     curve = history.bid_curve(run_id)
     assert len(curve) == 2
     assert sum(row["stop_samples"] for row in curve) == 1
+    history.record_training_exposure(
+        run_id,
+        {"rating-exact": 8, "frozen-test": 2},
+    )
+    exposure = history.training_exposure(run_id)
+    assert exposure[0] == {
+        "opponent": "rating-exact",
+        "training_matches": 8,
+        "actual_share_pct": 80.0,
+    }
 
 
 def test_observation_contains_current_state_but_not_future_pool() -> None:

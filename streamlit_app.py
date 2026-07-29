@@ -455,6 +455,24 @@ with training_tab:
                 },
             )
 
+            exposure_rows = training_history.training_exposure(selected_run)
+            if exposure_rows:
+                st.markdown("##### Training matches sampled")
+                st.caption(
+                    "Actual completed training-game exposure, separate from "
+                    "the held-out evaluation games shown above."
+                )
+                st.dataframe(
+                    exposure_rows,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "opponent": "Opponent",
+                        "training_matches": "Training matches",
+                        "actual_share_pct": "Actual share %",
+                    },
+                )
+
             progress = training_history.progress(selected_run)
             if progress:
                 progress_frame = pd.DataFrame(progress)

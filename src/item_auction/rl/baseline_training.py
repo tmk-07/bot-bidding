@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import random
+from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -35,13 +36,17 @@ class WeightedOpponentFactory:
         *,
         weights: dict[str, float],
         seed: int,
+        exposure_counter: Counter[str] | None = None,
     ) -> None:
         self.entries = list(entries)
         self.weights = [weights.get(entry.name, 1.0) for entry in self.entries]
         self.rng = random.Random(seed)
+        self.exposure_counter = exposure_counter
 
     def __call__(self) -> OpponentPolicy:
         entry = self.rng.choices(self.entries, weights=self.weights, k=1)[0]
+        if self.exposure_counter is not None:
+            self.exposure_counter[entry.name] += 1
         return entry.factory()
 
 
@@ -247,6 +252,7 @@ def train_baseline(
         seed=seed,
         config=config,
     )
+    training_exposure: Counter[str] = Counter()
 
     def make_environment(index: int) -> Callable[[], FixedOpponentEnv]:
         def factory() -> FixedOpponentEnv:
@@ -254,6 +260,7 @@ def train_baseline(
                 entries,
                 weights=resolved_weights,
                 seed=seed + index * 97_409,
+                exposure_counter=training_exposure,
             )
             return FixedOpponentEnv(opponent_factory, randomize_seat=True)
 
@@ -333,6 +340,7 @@ def train_baseline(
         history.finish_run(run_id, status="failed")
         raise
     finally:
+        history.record_training_exposure(run_id, dict(training_exposure))
         vector_env.close()
     return run_id, final_path.with_suffix(".zip")
 
