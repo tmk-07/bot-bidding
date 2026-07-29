@@ -14,6 +14,7 @@ from .opponents import (
     OpponentEntry,
     OpponentPool,
     OpponentPolicy,
+    RatingNoisePolicy,
 )
 
 
@@ -48,12 +49,35 @@ def baseline_entries() -> list[OpponentEntry]:
     return OpponentPool.training_baselines().entries
 
 
+def available_entries() -> list[OpponentEntry]:
+    """All structured policies available to a configurable curriculum."""
+
+    entries = baseline_entries()
+    entries.extend(
+        [
+            OpponentEntry(
+                "rating-exact",
+                lambda: RatingNoisePolicy(0.0, name="rating-exact"),
+            ),
+            OpponentEntry(
+                "rating-noise-5",
+                lambda: RatingNoisePolicy(0.05, name="rating-noise-5"),
+            ),
+            OpponentEntry(
+                "rating-noise-20",
+                lambda: RatingNoisePolicy(0.20, name="rating-noise-20"),
+            ),
+        ]
+    )
+    return entries
+
+
 def selected_entries(
     *,
     opponent_names: Sequence[str] | None = None,
     frozen_models: Sequence[str | Path] | None = None,
 ) -> list[OpponentEntry]:
-    available = {entry.name: entry for entry in baseline_entries()}
+    available = {entry.name: entry for entry in available_entries()}
     names = list(opponent_names or available)
     unknown = sorted(set(names) - set(available))
     if unknown:
@@ -152,6 +176,7 @@ def train_baseline(
     opponent_names: Sequence[str] | None = None,
     frozen_models: Sequence[str | Path] | None = None,
     start_model: str | Path | None = None,
+    opponent_weights: dict[str, float] | None = None,
 ) -> tuple[str, Path]:
     """Train MaskablePPO against selected baselines and frozen checkpoints."""
 
@@ -177,13 +202,30 @@ def train_baseline(
         opponent_names=opponent_names,
         frozen_models=frozen_models,
     )
-    opponent_weights = {
-        entry.name: DEFAULT_WEIGHTS.get(entry.name, 0.30)
-        for entry in entries
-    }
+    if opponent_weights is None:
+        resolved_weights = {
+            entry.name: DEFAULT_WEIGHTS.get(entry.name, 0.30)
+            for entry in entries
+        }
+    else:
+        entry_names = {entry.name for entry in entries}
+        unknown_weights = sorted(set(opponent_weights) - entry_names)
+        if unknown_weights:
+            raise ValueError(
+                "Weights supplied for unavailable opponents: "
+                + ", ".join(unknown_weights)
+            )
+        resolved_weights = {
+            entry.name: opponent_weights.get(entry.name, 0.0)
+            for entry in entries
+        }
+        if any(weight < 0 for weight in resolved_weights.values()):
+            raise ValueError("Opponent weights must not be negative")
+        if sum(resolved_weights.values()) <= 0:
+            raise ValueError("At least one opponent weight must be positive")
     config = {
         "opponents": [entry.name for entry in entries],
-        "opponent_weights": opponent_weights,
+        "opponent_weights": resolved_weights,
         "frozen_models": [str(Path(path)) for path in frozen_models or []],
         "start_model": str(Path(start_model)) if start_model else None,
         "evaluation_interval": evaluation_interval,
@@ -210,7 +252,7 @@ def train_baseline(
         def factory() -> FixedOpponentEnv:
             opponent_factory = WeightedOpponentFactory(
                 entries,
-                weights=opponent_weights,
+                weights=resolved_weights,
                 seed=seed + index * 97_409,
             )
             return FixedOpponentEnv(opponent_factory, randomize_seat=True)
@@ -307,7 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--opponents",
         nargs="+",
-        choices=[entry.name for entry in baseline_entries()],
+        choices=[entry.name for entry in available_entries()],
         help="Structured baseline opponents to include (default: all four).",
     )
     parser.add_argument(
@@ -321,6 +363,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Saved MaskablePPO .zip whose learner weights should be continued.",
     )
     parser.add_argument(
+        "--opponent-weight",
+        action="append",
+        default=[],
+        metavar="NAME=WEIGHT",
+        help="Episode sampling weight for a selected opponent.",
+    )
+    parser.add_argument(
         "--history", default="data/training_history.sqlite3"
     )
     parser.add_argument("--models", default="models")
@@ -329,6 +378,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     arguments = build_parser().parse_args()
+    parsed_weights: dict[str, float] | None = None
+    if arguments.opponent_weight:
+        parsed_weights = {}
+        for specification in arguments.opponent_weight:
+            try:
+                name, raw_weight = specification.rsplit("=", 1)
+                parsed_weights[name] = float(raw_weight)
+            except (ValueError, TypeError) as exc:
+                raise SystemExit(
+                    f"Invalid --opponent-weight {specification!r}; "
+                    "expected NAME=WEIGHT"
+                ) from exc
     run_id, model_path = train_baseline(
         total_timesteps=arguments.timesteps,
         evaluation_interval=arguments.eval_interval,
@@ -340,6 +401,7 @@ def main() -> None:
         opponent_names=arguments.opponents,
         frozen_models=arguments.frozen_model,
         start_model=arguments.start_model,
+        opponent_weights=parsed_weights,
     )
     print(f"Training run {run_id} completed.")
     print(f"Model: {model_path}")

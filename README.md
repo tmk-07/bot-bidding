@@ -123,6 +123,21 @@ New evaluations also store every learner decision. The dashboard plots action
 mix, items drafted, and budget usage across checkpoints so behavioral changes
 can be compared with win rate and score changes.
 
+Custom curricula can combine exact-rating and noisy-rating variants with
+explicit episode weights:
+
+```bash
+item-auction-train-baseline \
+  --opponents rating-exact rating-noise-5 rating-noise-20 deal-probability \
+  --opponent-weight rating-exact=0.30 \
+  --opponent-weight rating-noise-5=0.30 \
+  --opponent-weight rating-noise-20=0.30 \
+  --opponent-weight deal-probability=0.10
+```
+
+Weights are sampling probabilities after normalization. Available rating
+curricula include exact rating, ±5%, the original ±10%, and ±20%.
+
 ## Command-line quick start
 
 No runtime dependencies are required:

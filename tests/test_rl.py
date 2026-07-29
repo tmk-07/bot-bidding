@@ -5,6 +5,7 @@ from gymnasium.utils.env_checker import check_env
 from pettingzoo.test import api_test
 
 from item_auction.core import AuctionEngine
+from item_auction.rl.baseline_training import available_entries
 from item_auction.rl import (
     ACTION_COUNT,
     AggressiveHighValuePolicy,
@@ -121,6 +122,8 @@ def test_training_pool_excludes_pure_random_policy() -> None:
         "aggressive-high-value",
         "deal-probability",
     }
+    available_names = {entry.name for entry in available_entries()}
+    assert {"rating-exact", "rating-noise-5", "rating-noise-20"} <= available_names
 
 
 def test_training_history_records_players_and_every_selection(tmp_path) -> None:

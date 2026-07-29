@@ -77,8 +77,21 @@ class RatingNoisePolicy(_MaximumPolicy):
 
     name = "rating-noise"
 
+    def __init__(
+        self,
+        noise_fraction: float = 0.10,
+        *,
+        name: str | None = None,
+    ) -> None:
+        if noise_fraction < 0:
+            raise ValueError("noise_fraction must not be negative")
+        super().__init__()
+        self.noise_fraction = noise_fraction
+        if name:
+            self.name = name
+
     def _choose_maximum(self, observation: PolicyObservation) -> int:
-        noise = self._rng.uniform(-0.10, 0.10)
+        noise = self._rng.uniform(-self.noise_fraction, self.noise_fraction)
         return round(observation.item_rating * (1.0 + noise))
 
 
