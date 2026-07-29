@@ -62,12 +62,28 @@ CREATE TABLE IF NOT EXISTS selections (
     PRIMARY KEY (game_id, auction_number)
 );
 
+CREATE TABLE IF NOT EXISTS learner_actions (
+    game_id INTEGER NOT NULL REFERENCES evaluation_games(id),
+    decision_number INTEGER NOT NULL,
+    auction_number INTEGER NOT NULL,
+    rating REAL NOT NULL,
+    current_bid INTEGER NOT NULL,
+    own_budget INTEGER NOT NULL,
+    opponent_budget INTEGER NOT NULL,
+    action_index INTEGER NOT NULL,
+    action_name TEXT NOT NULL,
+    target_bid INTEGER,
+    PRIMARY KEY (game_id, decision_number)
+);
+
 CREATE INDEX IF NOT EXISTS idx_games_run_checkpoint
     ON evaluation_games(run_id, checkpoint_steps);
 CREATE INDEX IF NOT EXISTS idx_games_opponent
     ON evaluation_games(opponent_name);
 CREATE INDEX IF NOT EXISTS idx_selections_game
     ON selections(game_id);
+CREATE INDEX IF NOT EXISTS idx_actions_game
+    ON learner_actions(game_id);
 """
 
 
@@ -157,6 +173,7 @@ class TrainingHistory:
         opponent_name: str,
         learner_agent: str,
         engine: AuctionEngine,
+        learner_actions: list[dict[str, Any]] | None = None,
     ) -> int:
         if not engine.done:
             raise ValueError("Only completed games can be recorded")
@@ -242,6 +259,30 @@ class TrainingHistory:
                         selection_winner_name,
                         auction.bids[learner_agent],
                         auction.bids[opponent_agent],
+                    ),
+                )
+            for decision_number, action in enumerate(
+                learner_actions or [], start=1
+            ):
+                connection.execute(
+                    """
+                    INSERT INTO learner_actions (
+                        game_id, decision_number, auction_number, rating,
+                        current_bid, own_budget, opponent_budget, action_index,
+                        action_name, target_bid
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        game_id,
+                        decision_number,
+                        action["auction_number"],
+                        action["rating"],
+                        action["current_bid"],
+                        action["own_budget"],
+                        action["opponent_budget"],
+                        action["action_index"],
+                        action["action_name"],
+                        action["target_bid"],
                     ),
                 )
         return game_id
@@ -378,12 +419,40 @@ class TrainingHistory:
                            ELSE 0.0
                        END), 1) AS win_credit_pct,
                        ROUND(AVG(p.score), 2) AS avg_score
+                       ,ROUND(AVG(p.items_drafted), 2) AS avg_items
+                       ,ROUND(AVG(p.budget_used), 2) AS avg_budget_used
                 FROM evaluation_games g
                 JOIN player_results p
                   ON p.game_id = g.id AND p.player_role = 'learner'
                 WHERE g.run_id = ?
                 GROUP BY g.checkpoint_steps, g.opponent_name
                 ORDER BY g.checkpoint_steps, g.opponent_name
+                """,
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def action_progress(self, run_id: str) -> list[dict[str, Any]]:
+        """Return the learner's action mix at each evaluation checkpoint."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                WITH counts AS (
+                    SELECT g.checkpoint_steps, a.action_name, COUNT(*) AS uses
+                    FROM learner_actions a
+                    JOIN evaluation_games g ON g.id = a.game_id
+                    WHERE g.run_id = ?
+                    GROUP BY g.checkpoint_steps, a.action_name
+                )
+                SELECT checkpoint_steps, action_name, uses,
+                       ROUND(
+                           100.0 * uses /
+                           SUM(uses) OVER (PARTITION BY checkpoint_steps),
+                           2
+                       ) AS action_pct
+                FROM counts
+                ORDER BY checkpoint_steps, action_name
                 """,
                 (run_id,),
             ).fetchall()

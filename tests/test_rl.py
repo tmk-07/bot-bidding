@@ -148,6 +148,18 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
         opponent_name="rating-noise",
         learner_agent="player_0",
         engine=engine,
+        learner_actions=[
+            {
+                "auction_number": 1,
+                "rating": 82,
+                "current_bid": 0,
+                "own_budget": 500,
+                "opponent_budget": 500,
+                "action_index": int(BidAction.MIN_RAISE),
+                "action_name": BidAction.MIN_RAISE.name,
+                "target_bid": 1,
+            }
+        ],
     )
     summary = history.player_summary(run_id, 10)
     selections = history.selections(run_id, 10)
@@ -159,6 +171,14 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
     assert selections[0]["winner"] in {"RL Bot", "rating-noise", "Unsold"}
     assert rating_band(100) == "100"
     assert rating_band(9) == "1-9"
+    assert history.action_progress(run_id) == [
+        {
+            "checkpoint_steps": 10,
+            "action_name": "MIN_RAISE",
+            "uses": 1,
+            "action_pct": 100.0,
+        }
+    ]
 
 
 def test_observation_contains_current_state_but_not_future_pool() -> None:

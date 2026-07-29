@@ -4,6 +4,7 @@ import math
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -23,6 +24,7 @@ class PolicyObservation:
     opponent_items: int
     items_remaining: int
     is_opening_turn: bool
+    recent_price_mean: float = 0.0
 
 
 class OpponentPolicy(Protocol):
@@ -181,6 +183,78 @@ class CallablePolicy:
         if not 0 <= action < len(action_mask) or not action_mask[action]:
             raise ValueError(f"{self.name} returned illegal action {action}")
         return action
+
+
+class FrozenCheckpointPolicy:
+    """Use a saved MaskablePPO checkpoint as an immutable opponent."""
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        name: str | None = None,
+        budget_start: int = 500,
+        pool_size: int = 20,
+        value_max: int = 100,
+    ) -> None:
+        try:
+            from sb3_contrib import MaskablePPO
+        except ImportError as exc:
+            raise RuntimeError(
+                "Frozen checkpoints require the training dependencies. "
+                "Install them with `pip install -e '.[train]'`."
+            ) from exc
+        self.path = Path(path)
+        if not self.path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {self.path}")
+        self.name = name or f"frozen-{self.path.stem}"
+        self.budget_start = budget_start
+        self.pool_size = pool_size
+        self.value_max = value_max
+        self.model = MaskablePPO.load(self.path)
+
+    def reset(self, seed: int | None = None) -> None:
+        pass
+
+    def start_auction(self, observation: PolicyObservation) -> None:
+        pass
+
+    def act(
+        self, observation: PolicyObservation, action_mask: np.ndarray
+    ) -> int:
+        max_score = self.pool_size * self.value_max
+        # On an acting player's turn, any current leader must be the other
+        # player because the engine alternates immediately after each bid.
+        values = np.asarray(
+            [
+                observation.item_rating / self.value_max,
+                observation.current_bid / self.budget_start,
+                observation.own_budget / self.budget_start,
+                observation.opponent_budget / self.budget_start,
+                observation.own_score / max_score,
+                observation.opponent_score / max_score,
+                observation.own_items / self.pool_size,
+                observation.opponent_items / self.pool_size,
+                observation.items_remaining / self.pool_size,
+                0.0,
+                float(observation.current_bid > 0),
+                observation.recent_price_mean / self.budget_start,
+            ],
+            dtype=np.float32,
+        )
+        model_observation = {
+            "observation": values,
+            "action_mask": action_mask.astype(np.int8),
+        }
+        action, _ = self.model.predict(
+            model_observation,
+            action_masks=action_mask,
+            deterministic=True,
+        )
+        selected = int(action)
+        if not 0 <= selected < len(action_mask) or not action_mask[selected]:
+            raise ValueError(f"{self.name} returned illegal action {selected}")
+        return selected
 
 
 @dataclass(frozen=True, slots=True)

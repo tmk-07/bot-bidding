@@ -348,7 +348,7 @@ with history_tab:
 with training_tab:
     st.markdown("#### Baseline training history")
     st.caption(
-        "Checkpoint evaluations against the four structured baseline bots. "
+        "Checkpoint evaluations against the opponents selected for each run. "
         "The pure-random bot is excluded."
     )
     training_history = TrainingHistory(TRAINING_HISTORY_PATH)
@@ -433,6 +433,16 @@ with training_tab:
                     columns="opponent",
                     values="avg_score",
                 )
+                item_progress = progress_frame.pivot(
+                    index="checkpoint_steps",
+                    columns="opponent",
+                    values="avg_items",
+                )
+                budget_progress = progress_frame.pivot(
+                    index="checkpoint_steps",
+                    columns="opponent",
+                    values="avg_budget_used",
+                )
                 chart_columns = st.columns(2)
                 with chart_columns[0]:
                     st.markdown("##### Win credit over training")
@@ -448,6 +458,40 @@ with training_tab:
                         x_label="Training steps",
                         y_label="Average score",
                     )
+                behavior_columns = st.columns(2)
+                with behavior_columns[0]:
+                    st.markdown("##### Items drafted over training")
+                    st.line_chart(
+                        item_progress,
+                        x_label="Training steps",
+                        y_label="Average items",
+                    )
+                with behavior_columns[1]:
+                    st.markdown("##### Budget used over training")
+                    st.line_chart(
+                        budget_progress,
+                        x_label="Training steps",
+                        y_label="Average dollars",
+                    )
+
+            action_progress = training_history.action_progress(selected_run)
+            if action_progress:
+                action_frame = pd.DataFrame(action_progress)
+                action_mix = action_frame.pivot(
+                    index="checkpoint_steps",
+                    columns="action_name",
+                    values="action_pct",
+                ).fillna(0)
+                st.markdown("##### RL action mix over training")
+                st.caption(
+                    "Share of the RL bot's evaluation decisions assigned to "
+                    "each bid action at every checkpoint."
+                )
+                st.line_chart(
+                    action_mix,
+                    x_label="Training steps",
+                    y_label="Share of decisions %",
+                )
 
             st.markdown("##### Price and ownership by rating range")
             rating_rows = training_history.rating_summary(

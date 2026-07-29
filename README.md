@@ -108,6 +108,21 @@ prices and ownership, plus every individual evaluation selection. Training
 rollout transitions are intentionally not written to SQLite because synchronous
 disk writes would substantially slow PPO.
 
+Continue a learner from an existing checkpoint while training against an
+immutable copy of that checkpoint and selected scripted opponents:
+
+```bash
+item-auction-train-baseline \
+  --timesteps 150000 \
+  --opponents rating-noise deal-probability \
+  --start-model models/baseline-PREVIOUS_RUN.zip \
+  --frozen-model models/baseline-PREVIOUS_RUN.zip
+```
+
+New evaluations also store every learner decision. The dashboard plots action
+mix, items drafted, and budget usage across checkpoints so behavioral changes
+can be compared with win rate and score changes.
+
 ## Command-line quick start
 
 No runtime dependencies are required:

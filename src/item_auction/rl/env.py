@@ -146,6 +146,12 @@ class AuctionAECEnv(AECEnv):
 
     def _policy_observation(self, agent: str) -> PolicyObservation:
         opponent = self.other(agent)
+        recent = self.engine.history[-5:]
+        recent_price_mean = (
+            sum(auction.price for auction in recent) / len(recent)
+            if recent
+            else 0.0
+        )
         return PolicyObservation(
             item_rating=float(self.current_rating),
             current_bid=self.current_bid,
@@ -159,6 +165,7 @@ class AuctionAECEnv(AECEnv):
             is_opening_turn=(
                 self.leader is None and agent == self.engine.current_opener
             ),
+            recent_price_mean=recent_price_mean,
         )
 
     def policy_observation(self, agent: str) -> PolicyObservation:

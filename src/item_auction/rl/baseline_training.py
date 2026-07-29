@@ -6,9 +6,15 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from .actions import BidAction, action_to_bid
 from .env import FixedOpponentEnv
 from .history import TrainingHistory
-from .opponents import OpponentEntry, OpponentPool, OpponentPolicy
+from .opponents import (
+    FrozenCheckpointPolicy,
+    OpponentEntry,
+    OpponentPool,
+    OpponentPolicy,
+)
 
 
 DEFAULT_WEIGHTS = {
@@ -42,6 +48,32 @@ def baseline_entries() -> list[OpponentEntry]:
     return OpponentPool.training_baselines().entries
 
 
+def selected_entries(
+    *,
+    opponent_names: Sequence[str] | None = None,
+    frozen_models: Sequence[str | Path] | None = None,
+) -> list[OpponentEntry]:
+    available = {entry.name: entry for entry in baseline_entries()}
+    names = list(opponent_names or available)
+    unknown = sorted(set(names) - set(available))
+    if unknown:
+        raise ValueError(f"Unknown baseline opponents: {', '.join(unknown)}")
+    entries = [available[name] for name in names]
+    for checkpoint in frozen_models or []:
+        path = Path(checkpoint)
+        checkpoint_id = path.stem.removeprefix("baseline-")
+        policy = FrozenCheckpointPolicy(
+            path,
+            name=f"frozen-{checkpoint_id}",
+        )
+        entries.append(
+            OpponentEntry(policy.name, lambda policy=policy: policy)
+        )
+    if not entries:
+        raise ValueError("At least one opponent is required")
+    return entries
+
+
 def evaluate_checkpoint(
     model: Any,
     *,
@@ -65,13 +97,34 @@ def evaluate_checkpoint(
             env = FixedOpponentEnv(entry.factory, randomize_seat=True)
             observation, _ = env.reset(seed=game_seed)
             terminated = False
+            learner_actions: list[dict[str, Any]] = []
             while not terminated:
                 action, _ = model.predict(
                     observation,
                     action_masks=observation["action_mask"],
                     deterministic=True,
                 )
-                observation, _, terminated, truncated, _ = env.step(int(action))
+                selected_action = int(action)
+                learner_actions.append(
+                    {
+                        "auction_number": env.aec.engine.item_index + 1,
+                        "rating": env.aec.current_rating,
+                        "current_bid": env.aec.current_bid,
+                        "own_budget": env.aec.budgets[env.learner_agent],
+                        "opponent_budget": env.aec.budgets[env.opponent_agent],
+                        "action_index": selected_action,
+                        "action_name": BidAction(selected_action).name,
+                        "target_bid": action_to_bid(
+                            selected_action,
+                            current_bid=env.aec.current_bid,
+                            own_budget=env.aec.budgets[env.learner_agent],
+                            opponent_budget=env.aec.budgets[env.opponent_agent],
+                        ),
+                    }
+                )
+                observation, _, terminated, truncated, _ = env.step(
+                    selected_action
+                )
                 if truncated:
                     raise RuntimeError("Evaluation game was unexpectedly truncated")
             history.record_game(
@@ -82,6 +135,7 @@ def evaluate_checkpoint(
                 opponent_name=entry.name,
                 learner_agent=env.learner_agent,
                 engine=env.aec.engine,
+                learner_actions=learner_actions,
             )
             env.close()
 
@@ -95,8 +149,11 @@ def train_baseline(
     seed: int = 7,
     history_path: str | Path = "data/training_history.sqlite3",
     model_directory: str | Path = "models",
+    opponent_names: Sequence[str] | None = None,
+    frozen_models: Sequence[str | Path] | None = None,
+    start_model: str | Path | None = None,
 ) -> tuple[str, Path]:
-    """Train MaskablePPO against the four structured baseline strategies."""
+    """Train MaskablePPO against selected baselines and frozen checkpoints."""
 
     if total_timesteps < 1:
         raise ValueError("total_timesteps must be positive")
@@ -116,10 +173,19 @@ def train_baseline(
             "`pip install -e '.[train]'`."
         ) from exc
 
-    entries = baseline_entries()
+    entries = selected_entries(
+        opponent_names=opponent_names,
+        frozen_models=frozen_models,
+    )
+    opponent_weights = {
+        entry.name: DEFAULT_WEIGHTS.get(entry.name, 0.30)
+        for entry in entries
+    }
     config = {
         "opponents": [entry.name for entry in entries],
-        "opponent_weights": DEFAULT_WEIGHTS,
+        "opponent_weights": opponent_weights,
+        "frozen_models": [str(Path(path)) for path in frozen_models or []],
+        "start_model": str(Path(start_model)) if start_model else None,
         "evaluation_interval": evaluation_interval,
         "evaluation_episodes_per_opponent": evaluation_episodes,
         "environments": environments,
@@ -144,7 +210,7 @@ def train_baseline(
         def factory() -> FixedOpponentEnv:
             opponent_factory = WeightedOpponentFactory(
                 entries,
-                weights=DEFAULT_WEIGHTS,
+                weights=opponent_weights,
                 seed=seed + index * 97_409,
             )
             return FixedOpponentEnv(opponent_factory, randomize_seat=True)
@@ -154,19 +220,28 @@ def train_baseline(
     vector_env = VecMonitor(
         DummyVecEnv([make_environment(index) for index in range(environments)])
     )
-    model = MaskablePPO(
-        "MultiInputPolicy",
-        vector_env,
-        learning_rate=3e-4,
-        n_steps=256,
-        gamma=0.995,
-        gae_lambda=0.95,
-        ent_coef=0.01,
-        batch_size=256,
-        policy_kwargs={"net_arch": [128, 128]},
-        seed=seed,
-        verbose=1,
-    )
+    if start_model:
+        start_path = Path(start_model)
+        if not start_path.exists():
+            raise FileNotFoundError(f"Starting checkpoint not found: {start_path}")
+        model = MaskablePPO.load(start_path, env=vector_env)
+        # Checkpoint labels and requested timesteps are local to this run, while
+        # policy and optimizer parameters continue from the saved checkpoint.
+        model.num_timesteps = 0
+    else:
+        model = MaskablePPO(
+            "MultiInputPolicy",
+            vector_env,
+            learning_rate=3e-4,
+            n_steps=256,
+            gamma=0.995,
+            gae_lambda=0.95,
+            ent_coef=0.01,
+            batch_size=256,
+            policy_kwargs={"net_arch": [128, 128]},
+            seed=seed,
+            verbose=1,
+        )
 
     model_directory = Path(model_directory)
     model_directory.mkdir(parents=True, exist_ok=True)
@@ -230,6 +305,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--environments", type=int, default=8)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
+        "--opponents",
+        nargs="+",
+        choices=[entry.name for entry in baseline_entries()],
+        help="Structured baseline opponents to include (default: all four).",
+    )
+    parser.add_argument(
+        "--frozen-model",
+        action="append",
+        default=[],
+        help="Saved MaskablePPO .zip to add as an immutable opponent.",
+    )
+    parser.add_argument(
+        "--start-model",
+        help="Saved MaskablePPO .zip whose learner weights should be continued.",
+    )
+    parser.add_argument(
         "--history", default="data/training_history.sqlite3"
     )
     parser.add_argument("--models", default="models")
@@ -246,6 +337,9 @@ def main() -> None:
         seed=arguments.seed,
         history_path=arguments.history,
         model_directory=arguments.models,
+        opponent_names=arguments.opponents,
+        frozen_models=arguments.frozen_model,
+        start_model=arguments.start_model,
     )
     print(f"Training run {run_id} completed.")
     print(f"Model: {model_path}")
