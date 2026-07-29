@@ -4,6 +4,8 @@ import secrets
 import sys
 from pathlib import Path
 
+import altair as alt
+import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
@@ -148,6 +150,41 @@ def roster_card(name: str, duel: AscendingAuctionDuel, leader: str) -> str:
         f'<div class="cash">${duel.engine.budgets[name]}</div></div>'
         f'<div style="max-height:145px;overflow:auto;margin-top:.65rem">{rows}</div></div>'
     )
+
+
+def training_line_chart(wide_frame: pd.DataFrame, y_label: str) -> None:
+    """Render a checkpoint chart whose training-step axis begins exactly at 0."""
+
+    frame = (
+        wide_frame.reset_index()
+        .melt(
+            id_vars="checkpoint_steps",
+            var_name="Series",
+            value_name=y_label,
+        )
+        .dropna()
+    )
+    max_steps = max(1, int(frame["checkpoint_steps"].max()))
+    chart = (
+        alt.Chart(frame)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X(
+                "checkpoint_steps:Q",
+                title="Training steps",
+                scale=alt.Scale(domain=[0, max_steps], nice=False),
+            ),
+            y=alt.Y(f"{y_label}:Q", title=y_label),
+            color=alt.Color("Series:N", title=None),
+            tooltip=[
+                alt.Tooltip("Series:N"),
+                alt.Tooltip("checkpoint_steps:Q", title="Training steps", format=","),
+                alt.Tooltip(f"{y_label}:Q", format=".2f"),
+            ],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(chart, use_container_width=True)
 
 
 with st.sidebar:
@@ -420,8 +457,6 @@ with training_tab:
 
             progress = training_history.progress(selected_run)
             if progress:
-                import pandas as pd
-
                 progress_frame = pd.DataFrame(progress)
                 win_progress = progress_frame.pivot(
                     index="checkpoint_steps",
@@ -446,32 +481,28 @@ with training_tab:
                 chart_columns = st.columns(2)
                 with chart_columns[0]:
                     st.markdown("##### Win credit over training")
-                    st.line_chart(
+                    training_line_chart(
                         win_progress,
-                        x_label="Training steps",
-                        y_label="Win credit %",
+                        "Win credit %",
                     )
                 with chart_columns[1]:
                     st.markdown("##### Average score over training")
-                    st.line_chart(
+                    training_line_chart(
                         score_progress,
-                        x_label="Training steps",
-                        y_label="Average score",
+                        "Average score",
                     )
                 behavior_columns = st.columns(2)
                 with behavior_columns[0]:
                     st.markdown("##### Items drafted over training")
-                    st.line_chart(
+                    training_line_chart(
                         item_progress,
-                        x_label="Training steps",
-                        y_label="Average items",
+                        "Average items",
                     )
                 with behavior_columns[1]:
                     st.markdown("##### Budget used over training")
-                    st.line_chart(
+                    training_line_chart(
                         budget_progress,
-                        x_label="Training steps",
-                        y_label="Average dollars",
+                        "Average dollars",
                     )
 
             action_progress = training_history.action_progress(selected_run)
@@ -487,10 +518,9 @@ with training_tab:
                     "Share of the RL bot's evaluation decisions assigned to "
                     "each bid action at every checkpoint."
                 )
-                st.line_chart(
+                training_line_chart(
                     action_mix,
-                    x_label="Training steps",
-                    y_label="Share of decisions %",
+                    "Share of decisions %",
                 )
 
             st.markdown("##### Price and ownership by rating range")
