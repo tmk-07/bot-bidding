@@ -16,7 +16,7 @@ BUDGET = 500
 POOL_SIZE = 20
 HUMAN = "You"
 BOT = "Random Bot"
-GAME_VERSION = 3
+GAME_VERSION = 4
 
 st.set_page_config(
     page_title="Auction",
