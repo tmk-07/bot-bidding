@@ -194,6 +194,23 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
         "training_matches": 8,
         "actual_share_pct": 80.0,
     }
+    history.record_game(
+        run_id=run_id,
+        checkpoint_steps=20,
+        episode=1,
+        seed=43,
+        opponent_name="rating-noise",
+        learner_agent="player_0",
+        engine=engine,
+    )
+    removed = history.truncate_run(
+        run_id,
+        10,
+        model_path="models/best.zip",
+    )
+    assert removed == 1
+    assert history.checkpoints(run_id) == [10]
+    assert history.training_exposure(run_id) == []
 
 
 def test_observation_contains_current_state_but_not_future_pool() -> None:

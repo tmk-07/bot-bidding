@@ -207,6 +207,72 @@ class TrainingHistory:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def truncate_run(
+        self,
+        run_id: str,
+        checkpoint_steps: int,
+        *,
+        model_path: str | None = None,
+    ) -> int:
+        """Remove evaluation history after a selected restored checkpoint.
+
+        Whole-run training exposure is also removed because it cannot be
+        accurately divided by checkpoint after training has completed.
+        Returns the number of evaluation games removed.
+        """
+
+        with self.connect() as connection:
+            exists = connection.execute(
+                """
+                SELECT 1
+                FROM evaluation_games
+                WHERE run_id = ? AND checkpoint_steps = ?
+                """,
+                (run_id, checkpoint_steps),
+            ).fetchone()
+            if not exists:
+                raise ValueError(
+                    f"Checkpoint {checkpoint_steps} is not recorded for {run_id}"
+                )
+            game_filter = """
+                SELECT id FROM evaluation_games
+                WHERE run_id = ? AND checkpoint_steps > ?
+            """
+            removed = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM ({game_filter})",
+                    (run_id, checkpoint_steps),
+                ).fetchone()[0]
+            )
+            parameters = (run_id, checkpoint_steps)
+            for table in ("learner_actions", "selections", "player_results"):
+                connection.execute(
+                    f"DELETE FROM {table} WHERE game_id IN ({game_filter})",
+                    parameters,
+                )
+            connection.execute(
+                """
+                DELETE FROM evaluation_games
+                WHERE run_id = ? AND checkpoint_steps > ?
+                """,
+                parameters,
+            )
+            connection.execute(
+                "DELETE FROM training_exposure WHERE run_id = ?",
+                (run_id,),
+            )
+            connection.execute(
+                """
+                UPDATE training_runs
+                SET total_timesteps = ?,
+                    status = 'truncated',
+                    model_path = COALESCE(?, model_path)
+                WHERE id = ?
+                """,
+                (checkpoint_steps, model_path, run_id),
+            )
+        return removed
+
     def record_game(
         self,
         *,

@@ -182,6 +182,8 @@ def train_baseline(
     frozen_models: Sequence[str | Path] | None = None,
     start_model: str | Path | None = None,
     opponent_weights: dict[str, float] | None = None,
+    rollout_steps: int = 1_024,
+    batch_size: int = 512,
 ) -> tuple[str, Path]:
     """Train MaskablePPO against selected baselines and frozen checkpoints."""
 
@@ -193,6 +195,15 @@ def train_baseline(
         raise ValueError("evaluation_episodes must be positive")
     if environments < 1:
         raise ValueError("environments must be positive")
+    if rollout_steps < 1:
+        raise ValueError("rollout_steps must be positive")
+    if batch_size < 2:
+        raise ValueError("batch_size must be at least 2")
+    rollout_size = rollout_steps * environments
+    if rollout_size % batch_size:
+        raise ValueError(
+            "batch_size must evenly divide rollout_steps * environments"
+        )
 
     try:
         from sb3_contrib import MaskablePPO
@@ -238,11 +249,11 @@ def train_baseline(
         "environments": environments,
         "policy": "MultiInputPolicy",
         "learning_rate": 3e-4,
-        "n_steps": 256,
+        "n_steps": rollout_steps,
         "gamma": 0.995,
         "gae_lambda": 0.95,
         "ent_coef": 0.01,
-        "batch_size": 256,
+        "batch_size": batch_size,
         "network": [128, 128],
     }
     history = TrainingHistory(history_path)
@@ -273,7 +284,14 @@ def train_baseline(
         start_path = Path(start_model)
         if not start_path.exists():
             raise FileNotFoundError(f"Starting checkpoint not found: {start_path}")
-        model = MaskablePPO.load(start_path, env=vector_env)
+        model = MaskablePPO.load(
+            start_path,
+            env=vector_env,
+            custom_objects={
+                "n_steps": rollout_steps,
+                "batch_size": batch_size,
+            },
+        )
         # Checkpoint labels and requested timesteps are local to this run, while
         # policy and optimizer parameters continue from the saved checkpoint.
         model.num_timesteps = 0
@@ -282,11 +300,11 @@ def train_baseline(
             "MultiInputPolicy",
             vector_env,
             learning_rate=3e-4,
-            n_steps=256,
+            n_steps=rollout_steps,
             gamma=0.995,
             gae_lambda=0.95,
             ent_coef=0.01,
-            batch_size=256,
+            batch_size=batch_size,
             policy_kwargs={"net_arch": [128, 128]},
             seed=seed,
             verbose=1,
@@ -353,6 +371,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-interval", type=int, default=25_000)
     parser.add_argument("--eval-episodes", type=int, default=100)
     parser.add_argument("--environments", type=int, default=8)
+    parser.add_argument(
+        "--rollout-steps",
+        type=int,
+        default=1_024,
+        help="Learner decisions collected per environment before each PPO update.",
+    )
+    parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
         "--opponents",
@@ -410,6 +435,8 @@ def main() -> None:
         frozen_models=arguments.frozen_model,
         start_model=arguments.start_model,
         opponent_weights=parsed_weights,
+        rollout_steps=arguments.rollout_steps,
+        batch_size=arguments.batch_size,
     )
     print(f"Training run {run_id} completed.")
     print(f"Model: {model_path}")

@@ -108,6 +108,12 @@ prices and ownership, plus every individual evaluation selection. Training
 rollout transitions are intentionally not written to SQLite because synchronous
 disk writes would substantially slow PPO.
 
+By default, PPO collects 1,024 learner decisions in each of 8 parallel
+environments before updating the policy. That is 8,192 decisions, or roughly
+32 complete 20-item auction games, per update. Adjust this aggregation with
+`--rollout-steps` and `--environments`; `--batch-size` must evenly divide their
+product.
+
 Continue a learner from an existing checkpoint while training against an
 immutable copy of that checkpoint and selected scripted opponents:
 
