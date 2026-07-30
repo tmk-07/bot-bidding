@@ -192,6 +192,81 @@ def evaluate_checkpoint(
             env.close()
 
 
+def evaluate_policy_checkpoint(
+    policy_factory: Callable[[], OpponentPolicy],
+    *,
+    history: TrainingHistory,
+    run_id: str,
+    checkpoint_steps: int,
+    episodes_per_opponent: int,
+    seed: int,
+    entries: Sequence[OpponentEntry],
+) -> None:
+    """Evaluate a non-SB3 policy with the same history detail as an RL model."""
+
+    for opponent_index, entry in enumerate(entries):
+        for episode in range(episodes_per_opponent):
+            game_seed = seed + opponent_index * 1_000_003 + episode
+            learner_policy = policy_factory()
+            learner_policy.reset(game_seed + 2)
+            env = FixedOpponentEnv(
+                entry.factory,
+                randomize_seat=True,
+            )
+            observation, _ = env.reset(seed=game_seed)
+            terminated = False
+            learner_actions: list[dict[str, Any]] = []
+            while not terminated:
+                public_observation = env.aec.policy_observation(
+                    env.learner_agent
+                )
+                selected_action = int(
+                    learner_policy.act(
+                        public_observation,
+                        observation["action_mask"],
+                    )
+                )
+                learner_actions.append(
+                    {
+                        "auction_number": env.aec.engine.item_index + 1,
+                        "rating": env.aec.current_rating,
+                        "current_bid": env.aec.current_bid,
+                        "own_budget": env.aec.budgets[env.learner_agent],
+                        "opponent_budget": env.aec.budgets[
+                            env.opponent_agent
+                        ],
+                        "action_index": selected_action,
+                        "action_name": BidAction(selected_action).name,
+                        "target_bid": action_to_bid(
+                            selected_action,
+                            current_bid=env.aec.current_bid,
+                            own_budget=env.aec.budgets[env.learner_agent],
+                            opponent_budget=env.aec.budgets[
+                                env.opponent_agent
+                            ],
+                        ),
+                    }
+                )
+                observation, _, terminated, truncated, _ = env.step(
+                    selected_action
+                )
+                if truncated:
+                    raise RuntimeError(
+                        "Evaluation game was unexpectedly truncated"
+                    )
+            history.record_game(
+                run_id=run_id,
+                checkpoint_steps=checkpoint_steps,
+                episode=episode,
+                seed=game_seed,
+                opponent_name=entry.name,
+                learner_agent=env.learner_agent,
+                engine=env.aec.engine,
+                learner_actions=learner_actions,
+            )
+            env.close()
+
+
 def train_baseline(
     *,
     total_timesteps: int = 100_000,

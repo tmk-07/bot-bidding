@@ -34,14 +34,14 @@ GENERALIST_BENCHMARK = [
     {
         "Opponent": "Iterated Bot v5",
         "Games": 500,
-        "Win credit": "66.3%",
-        "Average score margin": "+35.5",
+        "Win credit": "59.1%",
+        "Average score margin": "+22.2",
     },
     {
         "Opponent": "Deal-Value Bot v2",
         "Games": 500,
-        "Win credit": "67.4%",
-        "Average score margin": "+43.6",
+        "Win credit": "65.4%",
+        "Average score margin": "+44.2",
     },
     {
         "Opponent": "Rating Exact",
@@ -551,10 +551,11 @@ with training_tab:
     training_history = TrainingHistory(TRAINING_HISTORY_PATH)
     with st.expander("Market Generalist v1 held-out benchmark", expanded=True):
         st.caption(
-            "One universal policy, 500 fresh games per opponent. It receives "
-            "no opponent identity or future-item information. Rating Exact is "
-            "close to an equilibrium matchup, so its small edge should be "
-            "interpreted as near-even rather than an easy win."
+            "One universal policy, 500 fresh games per opponent. These games "
+            "are stored as the Market Generalist learner run, including every "
+            "selection and decision. It receives no opponent identity or "
+            "future-item information. Rating Exact is close to an equilibrium "
+            "matchup, so its small edge should be interpreted as near-even."
         )
         st.dataframe(
             GENERALIST_BENCHMARK,
@@ -571,6 +572,7 @@ with training_tab:
         family_names = {
             "iterated": "Iterated RL Bot",
             "deal-value": "Deal-Value RL Bot",
+            "market-generalist": "Market Generalist",
         }
         available_families = list(
             dict.fromkeys(

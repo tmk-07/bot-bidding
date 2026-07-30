@@ -5,7 +5,11 @@ from gymnasium.utils.env_checker import check_env
 from pettingzoo.test import api_test
 
 from item_auction.core import AuctionEngine
-from item_auction.rl.baseline_training import available_entries
+from item_auction.rl.baseline_training import (
+    available_entries,
+    evaluate_policy_checkpoint,
+    selected_entries,
+)
 from item_auction.rl import (
     ACTION_COUNT,
     AggressiveHighValuePolicy,
@@ -186,6 +190,29 @@ def test_market_pressure_policy_uses_public_context() -> None:
 
     assert policy.reservation_price(observation) == 81
     assert policy.act(observation, mask) == BidAction.MIN_RAISE
+
+
+def test_scripted_policy_evaluation_records_full_history(tmp_path) -> None:
+    history = TrainingHistory(tmp_path / "policy-history.sqlite3")
+    run_id = history.create_run(
+        algorithm="TunedPolicy",
+        total_timesteps=0,
+        seed=5,
+        config={"training_phase": "held-out-benchmark"},
+        learner_family="market-generalist",
+    )
+    evaluate_policy_checkpoint(
+        MarketPressurePolicy,
+        history=history,
+        run_id=run_id,
+        checkpoint_steps=0,
+        episodes_per_opponent=2,
+        seed=90,
+        entries=selected_entries(opponent_names=["rating-exact"]),
+    )
+
+    assert len(history.selections(run_id, 0)) == 40
+    assert sum(row["games"] for row in history.player_summary(run_id, 0)) == 4
 
 
 def test_incremental_learner_only_exposes_pass_and_minimum_raise() -> None:

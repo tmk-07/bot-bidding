@@ -41,8 +41,8 @@ neither player receives information about upcoming items.
 the neutral reservation price, then makes a bounded adjustment from public
 score and budget pressure per remaining item. It uses the same rule against
 every opponent and has no access to opponent identity. On a held-out
-500-game-per-opponent benchmark, Market Generalist v1 earned 66.3% win credit
-against Iterated Bot v5, 67.4% against Deal-Value Bot v2, and 52.2% against
+500-game-per-opponent benchmark, Market Generalist v1 earned 59.1% win credit
+against Iterated Bot v5, 65.4% against Deal-Value Bot v2, and 52.2% against
 Rating Exact. The last matchup is effectively near-even because exact
 rating-value bidding is close to the fair-price equilibrium of the current
 game.
