@@ -126,6 +126,7 @@ def evaluate_checkpoint(
     entries: Sequence[OpponentEntry] | None = None,
     observation_mode: str = "full",
     reward_mode: str = "standard",
+    learner_action_mode: str = "all",
 ) -> None:
     """Play deterministic held-out games and persist every result and selection."""
 
@@ -142,6 +143,7 @@ def evaluate_checkpoint(
                 randomize_seat=True,
                 observation_mode=observation_mode,
                 reward_mode=reward_mode,
+                learner_action_mode=learner_action_mode,
             )
             observation, _ = env.reset(seed=game_seed)
             terminated = False
@@ -200,6 +202,9 @@ def train_baseline(
     opponent_names: Sequence[str] | None = None,
     frozen_models: Sequence[str | Path] | None = None,
     frozen_names: Sequence[str] | None = None,
+    evaluation_opponent_names: Sequence[str] | None = None,
+    evaluation_frozen_models: Sequence[str | Path] | None = None,
+    evaluation_frozen_names: Sequence[str] | None = None,
     start_model: str | Path | None = None,
     opponent_weights: dict[str, float] | None = None,
     rollout_steps: int = 1_024,
@@ -208,6 +213,11 @@ def train_baseline(
     training_phase: str = "context",
     observation_mode: str = "full",
     reward_mode: str = "standard",
+    learner_action_mode: str = "all",
+    learning_rate: float = 3e-4,
+    ent_coef: float = 0.01,
+    target_kl: float | None = None,
+    n_epochs: int = 10,
 ) -> tuple[str, Path]:
     """Train MaskablePPO against selected baselines and frozen checkpoints."""
 
@@ -223,6 +233,14 @@ def train_baseline(
         raise ValueError("rollout_steps must be positive")
     if batch_size < 2:
         raise ValueError("batch_size must be at least 2")
+    if learning_rate <= 0:
+        raise ValueError("learning_rate must be positive")
+    if ent_coef < 0:
+        raise ValueError("ent_coef must not be negative")
+    if target_kl is not None and target_kl <= 0:
+        raise ValueError("target_kl must be positive")
+    if n_epochs < 1:
+        raise ValueError("n_epochs must be positive")
     rollout_size = rollout_steps * environments
     if rollout_size % batch_size:
         raise ValueError(
@@ -243,6 +261,17 @@ def train_baseline(
         frozen_models=frozen_models,
         frozen_names=frozen_names,
     )
+    if (
+        evaluation_opponent_names is None
+        and evaluation_frozen_models is None
+    ):
+        evaluation_entries = entries
+    else:
+        evaluation_entries = selected_entries(
+            opponent_names=evaluation_opponent_names,
+            frozen_models=evaluation_frozen_models,
+            frozen_names=evaluation_frozen_names,
+        )
     if opponent_weights is None:
         resolved_weights = {
             entry.name: DEFAULT_WEIGHTS.get(entry.name, 0.30)
@@ -269,20 +298,30 @@ def train_baseline(
         "opponent_weights": resolved_weights,
         "frozen_models": [str(Path(path)) for path in frozen_models or []],
         "frozen_names": list(frozen_names or []),
+        "evaluation_opponents": [
+            entry.name for entry in evaluation_entries
+        ],
+        "evaluation_frozen_models": [
+            str(Path(path)) for path in evaluation_frozen_models or []
+        ],
+        "evaluation_frozen_names": list(evaluation_frozen_names or []),
         "start_model": str(Path(start_model)) if start_model else None,
         "learner_family": learner_family,
         "training_phase": training_phase,
         "observation_mode": observation_mode,
         "reward_mode": reward_mode,
+        "learner_action_mode": learner_action_mode,
         "evaluation_interval": evaluation_interval,
         "evaluation_episodes_per_opponent": evaluation_episodes,
         "environments": environments,
         "policy": "MultiInputPolicy",
-        "learning_rate": 3e-4,
+        "learning_rate": learning_rate,
         "n_steps": rollout_steps,
         "gamma": 0.995,
         "gae_lambda": 0.95,
-        "ent_coef": 0.01,
+        "ent_coef": ent_coef,
+        "target_kl": target_kl,
+        "n_epochs": n_epochs,
         "batch_size": batch_size,
         "network": [128, 128],
     }
@@ -309,6 +348,7 @@ def train_baseline(
                 randomize_seat=True,
                 observation_mode=observation_mode,
                 reward_mode=reward_mode,
+                learner_action_mode=learner_action_mode,
             )
 
         return factory
@@ -326,6 +366,10 @@ def train_baseline(
             custom_objects={
                 "n_steps": rollout_steps,
                 "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "ent_coef": ent_coef,
+                "target_kl": target_kl,
+                "n_epochs": n_epochs,
             },
         )
         # Checkpoint labels and requested timesteps are local to this run, while
@@ -335,11 +379,13 @@ def train_baseline(
         model = MaskablePPO(
             "MultiInputPolicy",
             vector_env,
-            learning_rate=3e-4,
+            learning_rate=learning_rate,
             n_steps=rollout_steps,
             gamma=0.995,
             gae_lambda=0.95,
-            ent_coef=0.01,
+            ent_coef=ent_coef,
+            target_kl=target_kl,
+            n_epochs=n_epochs,
             batch_size=batch_size,
             policy_kwargs={"net_arch": [128, 128]},
             seed=seed,
@@ -359,9 +405,10 @@ def train_baseline(
             checkpoint_steps=0,
             episodes_per_opponent=evaluation_episodes,
             seed=seed + 50_000_000,
-            entries=entries,
+            entries=evaluation_entries,
             observation_mode=observation_mode,
             reward_mode=reward_mode,
+            learner_action_mode=learner_action_mode,
         )
         while model.num_timesteps < total_timesteps:
             chunk = min(
@@ -385,15 +432,17 @@ def train_baseline(
                 checkpoint_steps=completed_steps,
                 episodes_per_opponent=evaluation_episodes,
                 seed=seed + 50_000_000,
-                entries=entries,
+                entries=evaluation_entries,
                 observation_mode=observation_mode,
                 reward_mode=reward_mode,
+                learner_action_mode=learner_action_mode,
             )
         model.save(final_path)
         history.finish_run(
             run_id,
             status="completed",
             model_path=str(final_path.with_suffix(".zip")),
+            selected_checkpoint_steps=completed_steps,
         )
     except Exception:
         history.finish_run(run_id, status="failed")
@@ -428,9 +477,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reward-mode",
-        choices=["standard", "value-calibration"],
+        choices=["standard", "value-calibration", "value-guided"],
         default="standard",
     )
+    parser.add_argument(
+        "--learner-action-mode",
+        choices=["all", "incremental"],
+        default="all",
+    )
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--ent-coef", type=float, default=0.01)
+    parser.add_argument("--target-kl", type=float)
+    parser.add_argument("--n-epochs", type=int, default=10)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
         "--opponents",
@@ -449,6 +507,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Readable name paired by position with each --frozen-model.",
+    )
+    parser.add_argument(
+        "--eval-opponents",
+        nargs="+",
+        choices=[entry.name for entry in available_entries()],
+        help="Optional shared scripted evaluation league.",
+    )
+    parser.add_argument(
+        "--eval-frozen-model",
+        action="append",
+        default=[],
+        help="Saved checkpoint to include only in held-out evaluation.",
+    )
+    parser.add_argument(
+        "--eval-frozen-name",
+        action="append",
+        default=[],
+        help="Readable name paired with each --eval-frozen-model.",
     )
     parser.add_argument(
         "--start-model",
@@ -493,6 +569,13 @@ def main() -> None:
         opponent_names=arguments.opponents,
         frozen_models=arguments.frozen_model,
         frozen_names=arguments.frozen_name,
+        evaluation_opponent_names=arguments.eval_opponents,
+        evaluation_frozen_models=(
+            arguments.eval_frozen_model
+            if arguments.eval_frozen_model
+            else None
+        ),
+        evaluation_frozen_names=arguments.eval_frozen_name,
         start_model=arguments.start_model,
         opponent_weights=parsed_weights,
         rollout_steps=arguments.rollout_steps,
@@ -501,6 +584,11 @@ def main() -> None:
         training_phase=arguments.training_phase,
         observation_mode=arguments.observation_mode,
         reward_mode=arguments.reward_mode,
+        learner_action_mode=arguments.learner_action_mode,
+        learning_rate=arguments.learning_rate,
+        ent_coef=arguments.ent_coef,
+        target_kl=arguments.target_kl,
+        n_epochs=arguments.n_epochs,
     )
     print(f"Training run {run_id} completed.")
     print(f"Model: {model_path}")

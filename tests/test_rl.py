@@ -161,6 +161,23 @@ def test_value_calibration_penalizes_passing_below_rating() -> None:
     assert calibrated_reward == standard_reward - 0.10
 
 
+def test_incremental_learner_only_exposes_pass_and_minimum_raise() -> None:
+    opponent = lambda: CallablePolicy(
+        "pass",
+        lambda observation, mask: int(BidAction.PASS),
+    )
+    env = FixedOpponentEnv(
+        opponent,
+        randomize_seat=False,
+        learner_action_mode="incremental",
+    )
+    observation, _ = env.reset(seed=12)
+    assert observation["action_mask"][BidAction.PASS]
+    assert observation["action_mask"][BidAction.MIN_RAISE]
+    assert not observation["action_mask"][BidAction.OWN_10 :].any()
+    assert np.array_equal(observation["action_mask"], env.action_masks())
+
+
 def test_training_history_records_players_and_every_selection(tmp_path) -> None:
     history = TrainingHistory(tmp_path / "history.sqlite3")
     run_id = history.create_run(
@@ -243,6 +260,14 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
         learner_agent="player_0",
         engine=engine,
     )
+    history.select_checkpoint(
+        run_id,
+        20,
+        model_path="models/candidate.zip",
+    )
+    selected_run = history.runs()[0]
+    assert selected_run["selected_checkpoint_steps"] == 20
+    assert selected_run["model_path"] == "models/candidate.zip"
     removed = history.truncate_run(
         run_id,
         10,

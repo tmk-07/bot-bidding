@@ -268,7 +268,11 @@ def family_pricing_rows(
         checkpoints = history.checkpoints(run["id"])
         if not checkpoints:
             continue
-        checkpoint = checkpoints[-1]
+        checkpoint = (
+            run.get("selected_checkpoint_steps")
+            if run.get("selected_checkpoint_steps") in checkpoints
+            else checkpoints[-1]
+        )
         config = json.loads(run["config_json"])
         phase = config.get("training_phase", "context").replace("-", " ").title()
         for row in history.pricing_behavior(run["id"], checkpoint):
@@ -668,16 +672,32 @@ with training_tab:
         }
         selected_run_label = st.selectbox("Training run", list(run_labels))
         selected_run = run_labels[selected_run_label]
+        selected_run_record = next(
+            run for run in family_runs if run["id"] == selected_run
+        )
         checkpoints = training_history.checkpoints(selected_run)
         if not checkpoints:
             st.warning("This run has not completed its first evaluation yet.")
         else:
+            promoted_checkpoint = selected_run_record.get(
+                "selected_checkpoint_steps"
+            )
+            default_checkpoint = (
+                promoted_checkpoint
+                if promoted_checkpoint in checkpoints
+                else checkpoints[-1]
+            )
             selected_checkpoint = st.select_slider(
                 "Checkpoint steps",
                 options=checkpoints,
-                value=checkpoints[-1],
+                value=default_checkpoint,
                 format_func=lambda value: f"{value:,}",
             )
+            if promoted_checkpoint in checkpoints:
+                st.caption(
+                    f"Promoted checkpoint: {promoted_checkpoint:,} steps. "
+                    "The slider defaults to the model selected for play."
+                )
             summary = training_history.player_summary(
                 selected_run, selected_checkpoint
             )

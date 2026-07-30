@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS training_runs (
     algorithm TEXT NOT NULL,
     learner_family TEXT NOT NULL DEFAULT 'iterated',
     total_timesteps INTEGER NOT NULL,
+    selected_checkpoint_steps INTEGER,
     seed INTEGER NOT NULL,
     model_path TEXT,
     config_json TEXT NOT NULL
@@ -118,6 +119,7 @@ class TrainingHistory:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA foreign_keys = ON")
         try:
             connection.executescript(SCHEMA)
@@ -132,6 +134,13 @@ class TrainingHistory:
                     """
                     ALTER TABLE training_runs
                     ADD COLUMN learner_family TEXT NOT NULL DEFAULT 'iterated'
+                    """
+                )
+            if "selected_checkpoint_steps" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE training_runs
+                    ADD COLUMN selected_checkpoint_steps INTEGER
                     """
                 )
             yield connection
@@ -175,15 +184,55 @@ class TrainingHistory:
         *,
         status: str,
         model_path: str | None = None,
+        selected_checkpoint_steps: int | None = None,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 UPDATE training_runs
-                SET completed_at = ?, status = ?, model_path = ?
+                SET completed_at = ?, status = ?, model_path = ?,
+                    selected_checkpoint_steps = COALESCE(
+                        ?, selected_checkpoint_steps
+                    )
                 WHERE id = ?
                 """,
-                (datetime.now(UTC).isoformat(), status, model_path, run_id),
+                (
+                    datetime.now(UTC).isoformat(),
+                    status,
+                    model_path,
+                    selected_checkpoint_steps,
+                    run_id,
+                ),
+            )
+
+    def select_checkpoint(
+        self,
+        run_id: str,
+        checkpoint_steps: int,
+        *,
+        model_path: str,
+    ) -> None:
+        """Mark the checkpoint promoted from a completed training run."""
+
+        with self.connect() as connection:
+            exists = connection.execute(
+                """
+                SELECT 1 FROM evaluation_games
+                WHERE run_id = ? AND checkpoint_steps = ?
+                """,
+                (run_id, checkpoint_steps),
+            ).fetchone()
+            if not exists:
+                raise ValueError(
+                    f"Checkpoint {checkpoint_steps} is not recorded for {run_id}"
+                )
+            connection.execute(
+                """
+                UPDATE training_runs
+                SET selected_checkpoint_steps = ?, model_path = ?
+                WHERE id = ?
+                """,
+                (checkpoint_steps, model_path, run_id),
             )
 
     def record_training_exposure(
@@ -282,10 +331,11 @@ class TrainingHistory:
                 UPDATE training_runs
                 SET total_timesteps = ?,
                     status = 'truncated',
-                    model_path = COALESCE(?, model_path)
+                    model_path = COALESCE(?, model_path),
+                    selected_checkpoint_steps = ?
                 WHERE id = ?
                 """,
-                (checkpoint_steps, model_path, run_id),
+                (checkpoint_steps, model_path, checkpoint_steps, run_id),
             )
         return removed
 

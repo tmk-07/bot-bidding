@@ -287,6 +287,7 @@ class FixedOpponentEnv(gym.Env):
         randomize_seat: bool = True,
         observation_mode: str = "full",
         reward_mode: str = "standard",
+        learner_action_mode: str = "all",
         render_mode: str | None = None,
     ) -> None:
         super().__init__()
@@ -295,12 +296,22 @@ class FixedOpponentEnv(gym.Env):
         self.randomize_seat = randomize_seat
         if observation_mode not in {"full", "value-only"}:
             raise ValueError("observation_mode must be 'full' or 'value-only'")
-        if reward_mode not in {"standard", "value-calibration"}:
+        if reward_mode not in {
+            "standard",
+            "value-calibration",
+            "value-guided",
+        }:
             raise ValueError(
-                "reward_mode must be 'standard' or 'value-calibration'"
+                "reward_mode must be 'standard', 'value-calibration', "
+                "or 'value-guided'"
+            )
+        if learner_action_mode not in {"all", "incremental"}:
+            raise ValueError(
+                "learner_action_mode must be 'all' or 'incremental'"
             )
         self.observation_mode = observation_mode
         self.reward_mode = reward_mode
+        self.learner_action_mode = learner_action_mode
         self.render_mode = render_mode
         self.aec = AuctionAECEnv(render_mode=render_mode)
         self.action_space = spaces.Discrete(ACTION_COUNT)
@@ -311,6 +322,7 @@ class FixedOpponentEnv(gym.Env):
 
     def _learner_observation(self) -> dict[str, np.ndarray]:
         observation = self.aec.observe(self.learner_agent)
+        observation["action_mask"] = self._learner_action_mask()
         if self.observation_mode == "value-only" and not self.aec.engine.done:
             values = observation["observation"].copy()
             # The calibration phase sees only rating, visible price, and
@@ -319,6 +331,13 @@ class FixedOpponentEnv(gym.Env):
             values[[2, 3, 4, 5, 6, 7, 8, 11]] = 0.0
             observation["observation"] = values
         return observation
+
+    def _learner_action_mask(self) -> np.ndarray:
+        mask = self.aec.action_mask(self.learner_agent)
+        if self.learner_action_mode == "incremental":
+            mask = mask.copy()
+            mask[int(BidAction.MIN_RAISE) + 1 :] = 0
+        return mask
 
     @property
     def opponent_agent(self) -> str:
@@ -363,7 +382,7 @@ class FixedOpponentEnv(gym.Env):
 
     def step(self, action: int):
         calibration_reward = 0.0
-        if self.reward_mode == "value-calibration":
+        if self.reward_mode in {"value-calibration", "value-guided"}:
             current_bid = self.aec.current_bid
             own_budget = self.aec.budgets[self.learner_agent]
             opponent_budget = self.aec.budgets[self.opponent_agent]
@@ -380,7 +399,12 @@ class FixedOpponentEnv(gym.Env):
                 proposed_bid is not None
                 and current_bid < proposed_bid <= market_value
             )
-            calibration_reward = 0.10 if correct else -0.10
+            magnitude = (
+                0.10
+                if self.reward_mode == "value-calibration"
+                else 0.02
+            )
+            calibration_reward = magnitude if correct else -magnitude
         self.aec.step(int(action))
         reward = self.aec.rewards[self.learner_agent] + calibration_reward
         reward += self._play_opponent_turns()
@@ -397,7 +421,7 @@ class FixedOpponentEnv(gym.Env):
     def action_masks(self) -> np.ndarray:
         """Expose legal actions in the form expected by MaskablePPO."""
 
-        return self.aec.action_mask(self.learner_agent)
+        return self._learner_action_mask()
 
     def render(self):
         return self.aec.render()

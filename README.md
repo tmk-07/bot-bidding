@@ -114,6 +114,35 @@ environments before updating the policy. That is 8,192 decisions, or roughly
 `--rollout-steps` and `--environments`; `--batch-size` must evenly divide their
 product.
 
+For serious comparisons, keep the evaluation league fixed even when the
+training curriculum changes. `--eval-opponents`, `--eval-frozen-model`, and
+`--eval-frozen-name` define that held-out league. The trainer evaluates the
+unchanged starting policy at step 0 and every checkpoint afterward, which
+makes promotion a direct comparison rather than a judgment based on rollout
+reward.
+
+The stabilized league-training defaults can be overridden explicitly:
+
+```bash
+item-auction-train-baseline \
+  --learning-rate 0.0001 \
+  --ent-coef 0.005 \
+  --target-kl 0.02 \
+  --n-epochs 10 \
+  --reward-mode value-guided
+```
+
+`value-guided` retains the game-result reward while adding a small dense signal
+for bidding below an item's visible rating and avoiding bids above it. The
+`incremental` learner action mode restricts a newly trained learner to pass or
+raise by $1, but it should not be applied directly to a checkpoint trained with
+the full action space: that changes the policy's action semantics. Frozen
+opponents always retain the action space with which they were trained.
+
+Each run records its promoted checkpoint separately from its final checkpoint.
+The Training dashboard defaults to the promoted model while keeping later
+checkpoints available for overfitting analysis.
+
 Continue a learner from an existing checkpoint while training against an
 immutable copy of that checkpoint and selected scripted opponents:
 
