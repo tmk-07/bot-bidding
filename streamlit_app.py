@@ -188,6 +188,67 @@ def training_line_chart(wide_frame: pd.DataFrame, y_label: str) -> None:
     st.altair_chart(chart, use_container_width=True)
 
 
+def family_evolution_rows(
+    history: TrainingHistory,
+    runs: list[dict],
+) -> list[dict]:
+    """Combine completed sessions into one chronological learner lineage."""
+
+    usable_runs = sorted(
+        (
+            run
+            for run in runs
+            if run["status"] in {"completed", "truncated"}
+        ),
+        key=lambda run: run["created_at"],
+    )
+    rows: list[dict] = []
+    step_offset = 0
+    sequence = 0
+    for run_number, run in enumerate(usable_runs, start=1):
+        config = json.loads(run["config_json"])
+        phase = config.get("training_phase", "context").replace("-", " ").title()
+        progress = history.progress(run["id"])
+        checkpoints = sorted({row["checkpoint_steps"] for row in progress})
+        for checkpoint in checkpoints:
+            checkpoint_rows = [
+                row
+                for row in progress
+                if row["checkpoint_steps"] == checkpoint
+            ]
+            if not checkpoint_rows:
+                continue
+            sequence += 1
+            rows.append(
+                {
+                    "family_steps": step_offset + checkpoint,
+                    "sequence": sequence,
+                    "session": f"{run_number}. {phase}",
+                    "run_id": run["id"],
+                    "checkpoint_steps": checkpoint,
+                    "win_credit_pct": sum(
+                        row["win_credit_pct"] for row in checkpoint_rows
+                    )
+                    / len(checkpoint_rows),
+                    "avg_score": sum(
+                        row["avg_score"] for row in checkpoint_rows
+                    )
+                    / len(checkpoint_rows),
+                    "avg_items": sum(
+                        row["avg_items"] for row in checkpoint_rows
+                    )
+                    / len(checkpoint_rows),
+                    "avg_budget_used": sum(
+                        row["avg_budget_used"] for row in checkpoint_rows
+                    )
+                    / len(checkpoint_rows),
+                }
+            )
+        if checkpoints:
+            step_offset += checkpoints[-1]
+    return rows
+
+
 with st.sidebar:
     st.markdown("### Game setup")
     st.markdown(
@@ -418,6 +479,74 @@ with training_tab:
             for run in runs
             if run.get("learner_family", "iterated") == selected_family
         ]
+        evolution_rows = family_evolution_rows(training_history, family_runs)
+        if evolution_rows:
+            st.markdown("##### Learner evolution across sessions")
+            st.caption(
+                "Each color is one training session. The x-axis accumulates "
+                "learner decisions across completed sessions. Because curricula "
+                "can change, performance metrics reflect each session's own "
+                "evaluation opponents."
+            )
+            evolution_metrics = {
+                "Win credit": ("win_credit_pct", "Win credit %"),
+                "Average score": ("avg_score", "Average score"),
+                "Items drafted": ("avg_items", "Average items"),
+                "Budget used": ("avg_budget_used", "Average dollars"),
+            }
+            evolution_choice = st.selectbox(
+                "Evolution measure",
+                list(evolution_metrics),
+                key=f"evolution-{selected_family}",
+            )
+            evolution_field, evolution_label = evolution_metrics[
+                evolution_choice
+            ]
+            evolution_frame = pd.DataFrame(evolution_rows)
+            evolution_chart = (
+                alt.Chart(evolution_frame)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(
+                        "family_steps:Q",
+                        title="Cumulative learner decisions",
+                        scale=alt.Scale(
+                            domain=[
+                                0,
+                                max(
+                                    1,
+                                    int(evolution_frame["family_steps"].max()),
+                                ),
+                            ],
+                            nice=False,
+                        ),
+                    ),
+                    y=alt.Y(f"{evolution_field}:Q", title=evolution_label),
+                    color=alt.Color("session:N", title="Session"),
+                    order=alt.Order("sequence:Q"),
+                    tooltip=[
+                        alt.Tooltip("session:N", title="Session"),
+                        alt.Tooltip("run_id:N", title="Run"),
+                        alt.Tooltip(
+                            "family_steps:Q",
+                            title="Cumulative decisions",
+                            format=",",
+                        ),
+                        alt.Tooltip(
+                            "checkpoint_steps:Q",
+                            title="Session checkpoint",
+                            format=",",
+                        ),
+                        alt.Tooltip(
+                            f"{evolution_field}:Q",
+                            title=evolution_label,
+                            format=".2f",
+                        ),
+                    ],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(evolution_chart, use_container_width=True)
         run_labels = {
             (
                 f"{run['created_at'][:19].replace('T', ' ')} · "

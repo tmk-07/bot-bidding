@@ -166,6 +166,11 @@ from the original curriculum. Both phases use the same 8,192-decision PPO
 rollout default. Streamlit groups these runs under **Deal-Value RL Bot**,
 separate from **Iterated RL Bot**.
 
+The Training tab also combines every completed, non-superseded run into a
+family-level evolution chart. Its cumulative-decision timeline can display win
+credit, score, items drafted, or budget used while retaining the individual
+session colors and checkpoint tooltips.
+
 ## Command-line quick start
 
 No runtime dependencies are required:
