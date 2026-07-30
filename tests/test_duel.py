@@ -1,6 +1,7 @@
 import pytest
 
 from item_auction import AscendingAuctionDuel
+from item_auction.rl import BidAction, CallablePolicy
 
 
 def test_bot_raises_then_human_can_pass() -> None:
@@ -42,3 +43,21 @@ def test_passing_before_an_opening_bid_costs_bot_one_dollar() -> None:
     response = duel.human_pass()
     assert response.auction.winner == "Random Bot"
     assert response.auction.price == 1
+
+
+def test_trained_policy_can_play_through_human_duel() -> None:
+    policy = CallablePolicy(
+        "trained",
+        lambda observation, mask: int(BidAction.OWN_10),
+    )
+    duel = AscendingAuctionDuel(
+        bot_name="Trained Bot",
+        bot_policy=policy,
+    )
+    duel.reset(seed=42)
+
+    response = duel.human_raise(10)
+
+    assert not response.resolved
+    assert duel.leader == "Trained Bot"
+    assert duel.current_price == 50

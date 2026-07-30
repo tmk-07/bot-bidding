@@ -14,13 +14,17 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from item_auction import AscendingAuctionDuel  # noqa: E402
 from item_auction.rl import TrainingHistory  # noqa: E402
+from item_auction.rl.opponents import FrozenCheckpointPolicy  # noqa: E402
 
 
 BUDGET = 500
 POOL_SIZE = 20
 HUMAN = "You"
-BOT = "Random Bot"
-GAME_VERSION = 4
+BOT_MODELS = {
+    "Iterated Bot v5": ROOT / "models" / "active-iterated.zip",
+    "Deal-Value Bot v2": ROOT / "models" / "active-deal-value.zip",
+}
+GAME_VERSION = 5
 TRAINING_HISTORY_PATH = ROOT / "data" / "training_history.sqlite3"
 
 st.set_page_config(
@@ -88,13 +92,31 @@ st.markdown(
 )
 
 
+@st.cache_resource(show_spinner="Loading trained bot…")
+def load_bot_policy(
+    checkpoint: str,
+    bot_name: str,
+    checkpoint_mtime_ns: int,
+) -> FrozenCheckpointPolicy:
+    del checkpoint_mtime_ns
+    return FrozenCheckpointPolicy(checkpoint, name=bot_name)
+
+
 def start_draft() -> None:
     try:
+        bot_name = st.session_state.get("bot_choice", next(iter(BOT_MODELS)))
+        checkpoint = BOT_MODELS[bot_name].resolve(strict=True)
+        policy = load_bot_policy(
+            str(checkpoint),
+            bot_name,
+            checkpoint.stat().st_mtime_ns,
+        )
         duel = AscendingAuctionDuel(
             HUMAN,
-            BOT,
+            bot_name,
             budget=BUDGET,
             pool_size=POOL_SIZE,
+            bot_policy=policy,
         )
         duel.reset(secrets.randbits(63))
         st.session_state.duel = duel
@@ -102,7 +124,7 @@ def start_draft() -> None:
         st.session_state.game_result = None
         st.session_state.ui_error = None
         st.session_state.game_version = GAME_VERSION
-    except (ValueError, TypeError) as exc:
+    except (FileNotFoundError, RuntimeError, ValueError, TypeError) as exc:
         st.session_state.ui_error = str(exc)
 
 
@@ -289,11 +311,17 @@ def family_pricing_rows(
 
 with st.sidebar:
     st.markdown("### Game setup")
+    selected_bot = st.selectbox(
+        "Opponent",
+        list(BOT_MODELS),
+        key="bot_choice",
+        on_change=start_draft,
+    )
     st.markdown(
-        """
-        **You vs Random Bot**
+        f"""
+        **You vs {selected_bot}**
 
-        20 items · ratings 1–100
+        20 items · ratings 1–100<br>
         $500 each · no roster limit
         """
     )
@@ -305,8 +333,9 @@ with st.sidebar:
     )
     st.divider()
     st.caption(
-        "The bot sets a private random spending limit for each item. "
-        "It raises by $1 until that limit is reached."
+        "The selected trained policy sees the visible rating, current price, "
+        "budgets, scores, rosters, items remaining, and recent prices. "
+        "Upcoming items remain hidden."
     )
 
 if st.session_state.get("game_version") != GAME_VERSION:
@@ -322,6 +351,7 @@ if st.session_state.get("ui_error"):
     st.error(st.session_state.ui_error)
 
 duel: AscendingAuctionDuel = st.session_state.duel
+bot_name = duel.bot_name
 env = duel.env
 result = st.session_state.game_result
 completed = len(env.history)
@@ -420,7 +450,9 @@ with play_tab:
                     use_container_width=True,
                     on_click=pass_bid,
                 )
-            st.caption("The bot's private limit is revealed only by its decisions.")
+            st.caption(
+                "The bot's learned valuation is revealed only through its decisions."
+            )
         else:
             final_cols = st.columns(2)
             final_cols[0].metric(
@@ -429,9 +461,9 @@ with play_tab:
                 f"{len(result.rosters[HUMAN])} items",
             )
             final_cols[1].metric(
-                "Bot score",
-                f"{result.scores[BOT]:.0f}",
-                f"{len(result.rosters[BOT])} items",
+                f"{bot_name} score",
+                f"{result.scores[bot_name]:.0f}",
+                f"{len(result.rosters[bot_name])} items",
             )
             st.button(
                 "Play again",
@@ -446,7 +478,7 @@ with play_tab:
             if response.resolved and response.auction:
                 if response.auction.winner == HUMAN:
                     css += " win"
-                elif response.auction.winner == BOT:
+                elif response.auction.winner == bot_name:
                     css += " loss"
             st.markdown(
                 f'<div class="{css}">{response.message}</div>',
@@ -461,7 +493,7 @@ with play_tab:
         roster_card(HUMAN, duel, score_leader), unsafe_allow_html=True
     )
     roster_cols[1].markdown(
-        roster_card(BOT, duel, score_leader), unsafe_allow_html=True
+        roster_card(bot_name, duel, score_leader), unsafe_allow_html=True
     )
 
 with history_tab:
@@ -473,7 +505,7 @@ with history_tab:
             "Winner": auction.winner or "Unsold",
             "Price": auction.price,
             "Your final offer": auction.bids[HUMAN],
-            "Bot final offer": auction.bids[BOT],
+            f"{bot_name} final offer": auction.bids[bot_name],
         }
         for index, auction in enumerate(env.history)
     ]

@@ -17,7 +17,7 @@ The easiest way to explore the simulation is the local Streamlit dashboard:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[ui,dev]'
+pip install -e '.[ui,train,dev]'
 streamlit run streamlit_app.py
 ```
 
@@ -27,11 +27,15 @@ browser automatically. Stop it with `Ctrl+C` in the terminal.
 
 The dashboard's primary mode is a head-to-head blind auction:
 
-- you versus a bot that bids a random percentage of its remaining budget;
+- choose the promoted Iterated Bot or Deal-Value Bot as your opponent;
 - exactly 20 sequentially revealed items rated from 1–100;
 - $500 starting budgets and no mandated roster split;
 - turn-by-turn ascending bids: raise the visible price or pass;
 - live budgets, rosters, scores, and completed auction history;
+
+The trained opponent receives the same observation fields and legal-action
+mask used during evaluation. Changing the opponent starts a fresh draft, and
+neither player receives information about upcoming items.
 
 Default pools are sampled without replacement: all 20 ratings are unique within
 a draft. Custom engine pools also require unique item IDs.
