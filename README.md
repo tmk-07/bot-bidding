@@ -37,6 +37,16 @@ The trained opponent receives the same observation fields and legal-action
 mask used during evaluation. Changing the opponent starts a fresh draft, and
 neither player receives information about upcoming items.
 
+`MarketPressurePolicy` is the generalist opponent. It treats visible rating as
+the neutral reservation price, then makes a bounded adjustment from public
+score and budget pressure per remaining item. It uses the same rule against
+every opponent and has no access to opponent identity. On a held-out
+500-game-per-opponent benchmark, Market Generalist v1 earned 66.3% win credit
+against Iterated Bot v5, 67.4% against Deal-Value Bot v2, and 52.2% against
+Rating Exact. The last matchup is effectively near-even because exact
+rating-value bidding is close to the fair-price equilibrium of the current
+game.
+
 Default pools are sampled without replacement: all 20 ratings are unique within
 a draft. Custom engine pools also require unique item IDs.
 

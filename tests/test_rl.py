@@ -15,7 +15,9 @@ from item_auction.rl import (
     CallablePolicy,
     DealProbabilityPolicy,
     FixedOpponentEnv,
+    MarketPressurePolicy,
     OpponentPool,
+    PolicyObservation,
     RandomPassPolicy,
     RatingNoisePolicy,
     TrainingHistory,
@@ -123,7 +125,12 @@ def test_training_pool_excludes_pure_random_policy() -> None:
         "deal-probability",
     }
     available_names = {entry.name for entry in available_entries()}
-    assert {"rating-exact", "rating-noise-5", "rating-noise-20"} <= available_names
+    assert {
+        "rating-exact",
+        "rating-noise-5",
+        "rating-noise-20",
+        "market-pressure",
+    } <= available_names
 
 
 def test_value_only_training_hides_budget_and_match_context() -> None:
@@ -159,6 +166,26 @@ def test_value_calibration_penalizes_passing_below_rating() -> None:
     _, standard_reward, *_ = standard.step(BidAction.PASS)
     _, calibrated_reward, *_ = calibrated.step(BidAction.PASS)
     assert calibrated_reward == standard_reward - 0.10
+
+
+def test_market_pressure_policy_uses_public_context() -> None:
+    policy = MarketPressurePolicy()
+    observation = PolicyObservation(
+        item_rating=80,
+        current_bid=79,
+        own_budget=300,
+        opponent_budget=350,
+        own_score=200,
+        opponent_score=260,
+        own_items=4,
+        opponent_items=5,
+        items_remaining=5,
+        is_opening_turn=False,
+    )
+    mask = np.ones(ACTION_COUNT, dtype=np.int8)
+
+    assert policy.reservation_price(observation) == 81
+    assert policy.act(observation, mask) == BidAction.MIN_RAISE
 
 
 def test_incremental_learner_only_exposes_pass_and_minimum_raise() -> None:

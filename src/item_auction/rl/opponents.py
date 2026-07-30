@@ -164,6 +164,71 @@ class DealProbabilityPolicy(RandomPassPolicy):
         return int(BidAction.PASS)
 
 
+class MarketPressurePolicy:
+    """General market-value policy with score and budget feedback.
+
+    The visible rating is treated as the neutral reservation price. Small
+    context adjustments make the policy more assertive when it is behind and
+    more conservative when it has room to preserve cash. It deliberately uses
+    only public state and the same rule for every opponent.
+    """
+
+    name = "market-pressure"
+
+    def __init__(
+        self,
+        *,
+        score_gap_weight: float = 0.10,
+        budget_gap_weight: float = -0.10,
+        max_adjustment: int = 1,
+        name: str | None = None,
+    ) -> None:
+        if max_adjustment < 0:
+            raise ValueError("max_adjustment must not be negative")
+        self.score_gap_weight = score_gap_weight
+        self.budget_gap_weight = budget_gap_weight
+        self.max_adjustment = max_adjustment
+        if name:
+            self.name = name
+
+    def reset(self, seed: int | None = None) -> None:
+        pass
+
+    def start_auction(self, observation: PolicyObservation) -> None:
+        pass
+
+    def reservation_price(self, observation: PolicyObservation) -> int:
+        remaining = max(1, observation.items_remaining)
+        score_gap = observation.opponent_score - observation.own_score
+        budget_gap = observation.own_budget - observation.opponent_budget
+        raw_adjustment = (
+            self.score_gap_weight * score_gap
+            + self.budget_gap_weight * budget_gap
+        ) / remaining
+        adjustment = max(
+            -self.max_adjustment,
+            min(self.max_adjustment, round(raw_adjustment)),
+        )
+        return max(
+            0,
+            min(
+                observation.own_budget,
+                round(observation.item_rating) + adjustment,
+            ),
+        )
+
+    def act(
+        self, observation: PolicyObservation, action_mask: np.ndarray
+    ) -> int:
+        if not action_mask[BidAction.MIN_RAISE]:
+            return int(BidAction.PASS)
+        if observation.opponent_budget <= 0:
+            return int(BidAction.MIN_RAISE)
+        if observation.current_bid < self.reservation_price(observation):
+            return int(BidAction.MIN_RAISE)
+        return int(BidAction.PASS)
+
+
 class CallablePolicy:
     """Adapter for trained models, checkpoints, or any prediction callable.
 

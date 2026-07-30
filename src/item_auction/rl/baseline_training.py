@@ -12,6 +12,7 @@ from .env import FixedOpponentEnv
 from .history import TrainingHistory
 from .opponents import (
     FrozenCheckpointPolicy,
+    MarketPressurePolicy,
     OpponentEntry,
     OpponentPool,
     OpponentPolicy,
@@ -72,6 +73,7 @@ def available_entries() -> list[OpponentEntry]:
                 "rating-noise-20",
                 lambda: RatingNoisePolicy(0.20, name="rating-noise-20"),
             ),
+            OpponentEntry("market-pressure", MarketPressurePolicy),
         ]
     )
     return entries

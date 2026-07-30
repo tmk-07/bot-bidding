@@ -14,18 +14,42 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from item_auction import AscendingAuctionDuel  # noqa: E402
 from item_auction.rl import TrainingHistory  # noqa: E402
-from item_auction.rl.opponents import FrozenCheckpointPolicy  # noqa: E402
+from item_auction.rl.opponents import (  # noqa: E402
+    FrozenCheckpointPolicy,
+    MarketPressurePolicy,
+)
 
 
 BUDGET = 500
 POOL_SIZE = 20
 HUMAN = "You"
-BOT_MODELS = {
+BOT_OPTIONS = {
+    "Market Generalist v1": None,
     "Iterated Bot v5": ROOT / "models" / "active-iterated.zip",
     "Deal-Value Bot v2": ROOT / "models" / "active-deal-value.zip",
 }
-GAME_VERSION = 5
+GAME_VERSION = 6
 TRAINING_HISTORY_PATH = ROOT / "data" / "training_history.sqlite3"
+GENERALIST_BENCHMARK = [
+    {
+        "Opponent": "Iterated Bot v5",
+        "Games": 500,
+        "Win credit": "66.3%",
+        "Average score margin": "+35.5",
+    },
+    {
+        "Opponent": "Deal-Value Bot v2",
+        "Games": 500,
+        "Win credit": "67.4%",
+        "Average score margin": "+43.6",
+    },
+    {
+        "Opponent": "Rating Exact",
+        "Games": 500,
+        "Win credit": "52.2%",
+        "Average score margin": "+1.2",
+    },
+]
 
 st.set_page_config(
     page_title="Auction",
@@ -104,13 +128,17 @@ def load_bot_policy(
 
 def start_draft() -> None:
     try:
-        bot_name = st.session_state.get("bot_choice", next(iter(BOT_MODELS)))
-        checkpoint = BOT_MODELS[bot_name].resolve(strict=True)
-        policy = load_bot_policy(
-            str(checkpoint),
-            bot_name,
-            checkpoint.stat().st_mtime_ns,
-        )
+        bot_name = st.session_state.get("bot_choice", next(iter(BOT_OPTIONS)))
+        configured_checkpoint = BOT_OPTIONS[bot_name]
+        if configured_checkpoint is None:
+            policy = MarketPressurePolicy(name=bot_name)
+        else:
+            checkpoint = configured_checkpoint.resolve(strict=True)
+            policy = load_bot_policy(
+                str(checkpoint),
+                bot_name,
+                checkpoint.stat().st_mtime_ns,
+            )
         duel = AscendingAuctionDuel(
             HUMAN,
             bot_name,
@@ -313,7 +341,7 @@ with st.sidebar:
     st.markdown("### Game setup")
     selected_bot = st.selectbox(
         "Opponent",
-        list(BOT_MODELS),
+        list(BOT_OPTIONS),
         key="bot_choice",
         on_change=start_draft,
     )
@@ -521,6 +549,18 @@ with training_tab:
         "The pure-random bot is excluded."
     )
     training_history = TrainingHistory(TRAINING_HISTORY_PATH)
+    with st.expander("Market Generalist v1 held-out benchmark", expanded=True):
+        st.caption(
+            "One universal policy, 500 fresh games per opponent. It receives "
+            "no opponent identity or future-item information. Rating Exact is "
+            "close to an equilibrium matchup, so its small edge should be "
+            "interpreted as near-even rather than an easy win."
+        )
+        st.dataframe(
+            GENERALIST_BENCHMARK,
+            use_container_width=True,
+            hide_index=True,
+        )
     runs = training_history.runs()
     if not runs:
         st.info(
@@ -1019,9 +1059,11 @@ with rules_tab:
         $1 or holds. If it raises, you can raise again or pass. The current
         leader pays the visible current bid.
 
-        The bot samples a private random percentage of its remaining budget as
-        its limit for each new item. That limit stays fixed during the item's
-        auction.
+        The selected bot uses the visible item rating, current bid, public
+        budgets, scores, roster sizes, items remaining, and recent prices.
+        It cannot see future items. Market Generalist v1 uses one opponent-
+        agnostic market-value strategy; the other two options use their
+        promoted neural-network checkpoints.
 
         #### Draft
 
