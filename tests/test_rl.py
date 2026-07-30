@@ -126,6 +126,41 @@ def test_training_pool_excludes_pure_random_policy() -> None:
     assert {"rating-exact", "rating-noise-5", "rating-noise-20"} <= available_names
 
 
+def test_value_only_training_hides_budget_and_match_context() -> None:
+    opponent = lambda: CallablePolicy(
+        "pass",
+        lambda observation, mask: int(BidAction.PASS),
+    )
+    env = FixedOpponentEnv(
+        opponent,
+        randomize_seat=False,
+        observation_mode="value-only",
+    )
+    observation, _ = env.reset(seed=12)
+    values = observation["observation"]
+    assert values[0] > 0
+    assert np.all(values[[2, 3, 4, 5, 6, 7, 8, 11]] == 0)
+    assert observation["action_mask"][BidAction.PASS]
+
+
+def test_value_calibration_penalizes_passing_below_rating() -> None:
+    opponent = lambda: CallablePolicy(
+        "pass",
+        lambda observation, mask: int(BidAction.PASS),
+    )
+    standard = FixedOpponentEnv(opponent, randomize_seat=False)
+    calibrated = FixedOpponentEnv(
+        opponent,
+        randomize_seat=False,
+        reward_mode="value-calibration",
+    )
+    standard.reset(seed=12)
+    calibrated.reset(seed=12)
+    _, standard_reward, *_ = standard.step(BidAction.PASS)
+    _, calibrated_reward, *_ = calibrated.step(BidAction.PASS)
+    assert calibrated_reward == standard_reward - 0.10
+
+
 def test_training_history_records_players_and_every_selection(tmp_path) -> None:
     history = TrainingHistory(tmp_path / "history.sqlite3")
     run_id = history.create_run(
@@ -133,7 +168,9 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
         total_timesteps=10,
         seed=5,
         config={"purpose": "test"},
+        learner_family="deal-value",
     )
+    assert history.runs()[0]["learner_family"] == "deal-value"
     engine = AuctionEngine(pool_size=2)
     engine.reset(seed=42)
     engine.place_bid("player_0", 12)

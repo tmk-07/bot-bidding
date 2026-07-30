@@ -81,6 +81,7 @@ def selected_entries(
     *,
     opponent_names: Sequence[str] | None = None,
     frozen_models: Sequence[str | Path] | None = None,
+    frozen_names: Sequence[str] | None = None,
 ) -> list[OpponentEntry]:
     available = {entry.name: entry for entry in available_entries()}
     names = list(opponent_names or available)
@@ -88,12 +89,23 @@ def selected_entries(
     if unknown:
         raise ValueError(f"Unknown baseline opponents: {', '.join(unknown)}")
     entries = [available[name] for name in names]
-    for checkpoint in frozen_models or []:
+    checkpoints = list(frozen_models or [])
+    names_for_frozen = list(frozen_names or [])
+    if names_for_frozen and len(names_for_frozen) != len(checkpoints):
+        raise ValueError(
+            "frozen_names must contain one name for every frozen model"
+        )
+    for index, checkpoint in enumerate(checkpoints):
         path = Path(checkpoint)
         checkpoint_id = path.stem.removeprefix("baseline-")
+        frozen_name = (
+            names_for_frozen[index]
+            if names_for_frozen
+            else f"frozen-{checkpoint_id}"
+        )
         policy = FrozenCheckpointPolicy(
             path,
-            name=f"frozen-{checkpoint_id}",
+            name=frozen_name,
         )
         entries.append(
             OpponentEntry(policy.name, lambda policy=policy: policy)
@@ -112,6 +124,8 @@ def evaluate_checkpoint(
     episodes_per_opponent: int,
     seed: int,
     entries: Sequence[OpponentEntry] | None = None,
+    observation_mode: str = "full",
+    reward_mode: str = "standard",
 ) -> None:
     """Play deterministic held-out games and persist every result and selection."""
 
@@ -123,7 +137,12 @@ def evaluate_checkpoint(
                 + opponent_index * 1_000_003
                 + episode
             )
-            env = FixedOpponentEnv(entry.factory, randomize_seat=True)
+            env = FixedOpponentEnv(
+                entry.factory,
+                randomize_seat=True,
+                observation_mode=observation_mode,
+                reward_mode=reward_mode,
+            )
             observation, _ = env.reset(seed=game_seed)
             terminated = False
             learner_actions: list[dict[str, Any]] = []
@@ -180,10 +199,15 @@ def train_baseline(
     model_directory: str | Path = "models",
     opponent_names: Sequence[str] | None = None,
     frozen_models: Sequence[str | Path] | None = None,
+    frozen_names: Sequence[str] | None = None,
     start_model: str | Path | None = None,
     opponent_weights: dict[str, float] | None = None,
     rollout_steps: int = 1_024,
     batch_size: int = 512,
+    learner_family: str = "iterated",
+    training_phase: str = "context",
+    observation_mode: str = "full",
+    reward_mode: str = "standard",
 ) -> tuple[str, Path]:
     """Train MaskablePPO against selected baselines and frozen checkpoints."""
 
@@ -217,6 +241,7 @@ def train_baseline(
     entries = selected_entries(
         opponent_names=opponent_names,
         frozen_models=frozen_models,
+        frozen_names=frozen_names,
     )
     if opponent_weights is None:
         resolved_weights = {
@@ -243,7 +268,12 @@ def train_baseline(
         "opponents": [entry.name for entry in entries],
         "opponent_weights": resolved_weights,
         "frozen_models": [str(Path(path)) for path in frozen_models or []],
+        "frozen_names": list(frozen_names or []),
         "start_model": str(Path(start_model)) if start_model else None,
+        "learner_family": learner_family,
+        "training_phase": training_phase,
+        "observation_mode": observation_mode,
+        "reward_mode": reward_mode,
         "evaluation_interval": evaluation_interval,
         "evaluation_episodes_per_opponent": evaluation_episodes,
         "environments": environments,
@@ -262,6 +292,7 @@ def train_baseline(
         total_timesteps=total_timesteps,
         seed=seed,
         config=config,
+        learner_family=learner_family,
     )
     training_exposure: Counter[str] = Counter()
 
@@ -273,7 +304,12 @@ def train_baseline(
                 seed=seed + index * 97_409,
                 exposure_counter=training_exposure,
             )
-            return FixedOpponentEnv(opponent_factory, randomize_seat=True)
+            return FixedOpponentEnv(
+                opponent_factory,
+                randomize_seat=True,
+                observation_mode=observation_mode,
+                reward_mode=reward_mode,
+            )
 
         return factory
 
@@ -312,7 +348,8 @@ def train_baseline(
 
     model_directory = Path(model_directory)
     model_directory.mkdir(parents=True, exist_ok=True)
-    final_path = model_directory / f"baseline-{run_id}"
+    safe_family = learner_family.lower().replace(" ", "-").replace("_", "-")
+    final_path = model_directory / f"{safe_family}-{run_id}"
     completed_steps = 0
     try:
         evaluate_checkpoint(
@@ -323,6 +360,8 @@ def train_baseline(
             episodes_per_opponent=evaluation_episodes,
             seed=seed + 50_000_000,
             entries=entries,
+            observation_mode=observation_mode,
+            reward_mode=reward_mode,
         )
         while model.num_timesteps < total_timesteps:
             chunk = min(
@@ -336,7 +375,7 @@ def train_baseline(
             )
             completed_steps = model.num_timesteps
             checkpoint_path = model_directory / (
-                f"baseline-{run_id}-{completed_steps}"
+                f"{safe_family}-{run_id}-{completed_steps}"
             )
             model.save(checkpoint_path)
             evaluate_checkpoint(
@@ -347,6 +386,8 @@ def train_baseline(
                 episodes_per_opponent=evaluation_episodes,
                 seed=seed + 50_000_000,
                 entries=entries,
+                observation_mode=observation_mode,
+                reward_mode=reward_mode,
             )
         model.save(final_path)
         history.finish_run(
@@ -378,6 +419,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Learner decisions collected per environment before each PPO update.",
     )
     parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument("--learner-family", default="iterated")
+    parser.add_argument("--training-phase", default="context")
+    parser.add_argument(
+        "--observation-mode",
+        choices=["full", "value-only"],
+        default="full",
+    )
+    parser.add_argument(
+        "--reward-mode",
+        choices=["standard", "value-calibration"],
+        default="standard",
+    )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
         "--opponents",
@@ -390,6 +443,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Saved MaskablePPO .zip to add as an immutable opponent.",
+    )
+    parser.add_argument(
+        "--frozen-name",
+        action="append",
+        default=[],
+        help="Readable name paired by position with each --frozen-model.",
     )
     parser.add_argument(
         "--start-model",
@@ -433,10 +492,15 @@ def main() -> None:
         model_directory=arguments.models,
         opponent_names=arguments.opponents,
         frozen_models=arguments.frozen_model,
+        frozen_names=arguments.frozen_name,
         start_model=arguments.start_model,
         opponent_weights=parsed_weights,
         rollout_steps=arguments.rollout_steps,
         batch_size=arguments.batch_size,
+        learner_family=arguments.learner_family,
+        training_phase=arguments.training_phase,
+        observation_mode=arguments.observation_mode,
+        reward_mode=arguments.reward_mode,
     )
     print(f"Training run {run_id} completed.")
     print(f"Model: {model_path}")

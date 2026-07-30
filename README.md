@@ -125,6 +125,10 @@ item-auction-train-baseline \
   --frozen-model models/baseline-PREVIOUS_RUN.zip
 ```
 
+Use `--frozen-name "Frozen Bot v1"` alongside each `--frozen-model` to give
+checkpoint opponents readable names in training history. Runs can be grouped
+in the dashboard with `--learner-family`.
+
 New evaluations also store every learner decision. The dashboard plots action
 mix, items drafted, and budget usage across checkpoints so behavioral changes
 can be compared with win rate and score changes.
@@ -143,6 +147,24 @@ item-auction-train-baseline \
 
 Weights are sampling probabilities after normalization. Available rating
 curricula include exact rating, ±5%, the original ±10%, and ±20%.
+
+## Deal-value training
+
+Train a separate two-stage learner:
+
+```bash
+item-auction-train-deal-value \
+  --calibration-timesteps 100000 \
+  --context-timesteps 200000
+```
+
+The calibration phase hides match context and adds a dense price-discovery
+signal: bids at or below the item's rating are rewarded, while bids beyond that
+rating are penalized. The second phase restores budgets, scores, roster state,
+items remaining, and recent prices, then continues against the four opponents
+from the original curriculum. Both phases use the same 8,192-decision PPO
+rollout default. Streamlit groups these runs under **Deal-Value RL Bot**,
+separate from **Iterated RL Bot**.
 
 ## Command-line quick start
 

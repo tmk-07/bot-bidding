@@ -285,12 +285,22 @@ class FixedOpponentEnv(gym.Env):
         *,
         learner_agent: str = AGENTS[0],
         randomize_seat: bool = True,
+        observation_mode: str = "full",
+        reward_mode: str = "standard",
         render_mode: str | None = None,
     ) -> None:
         super().__init__()
         self.opponent_factory = opponent_factory
         self.learner_agent = learner_agent
         self.randomize_seat = randomize_seat
+        if observation_mode not in {"full", "value-only"}:
+            raise ValueError("observation_mode must be 'full' or 'value-only'")
+        if reward_mode not in {"standard", "value-calibration"}:
+            raise ValueError(
+                "reward_mode must be 'standard' or 'value-calibration'"
+            )
+        self.observation_mode = observation_mode
+        self.reward_mode = reward_mode
         self.render_mode = render_mode
         self.aec = AuctionAECEnv(render_mode=render_mode)
         self.action_space = spaces.Discrete(ACTION_COUNT)
@@ -298,6 +308,17 @@ class FixedOpponentEnv(gym.Env):
         self._rng = random.Random()
         self.opponent: OpponentPolicy | None = None
         self._opponent_item_index = -1
+
+    def _learner_observation(self) -> dict[str, np.ndarray]:
+        observation = self.aec.observe(self.learner_agent)
+        if self.observation_mode == "value-only" and not self.aec.engine.done:
+            values = observation["observation"].copy()
+            # The calibration phase sees only rating, visible price, and
+            # leadership state. Budget, score, roster, time, and recent-market
+            # context are introduced in the second training phase.
+            values[[2, 3, 4, 5, 6, 7, 8, 11]] = 0.0
+            observation["observation"] = values
+        return observation
 
     @property
     def opponent_agent(self) -> str:
@@ -335,17 +356,36 @@ class FixedOpponentEnv(gym.Env):
         self._opponent_item_index = -1
         self.aec.reset(seed=seed)
         self._play_opponent_turns()
-        return self.aec.observe(self.learner_agent), {
+        return self._learner_observation(), {
             "opponent": self.opponent.name,
             "learner_agent": self.learner_agent,
         }
 
     def step(self, action: int):
+        calibration_reward = 0.0
+        if self.reward_mode == "value-calibration":
+            current_bid = self.aec.current_bid
+            own_budget = self.aec.budgets[self.learner_agent]
+            opponent_budget = self.aec.budgets[self.opponent_agent]
+            market_value = min(self.aec.current_rating, own_budget)
+            proposed_bid = action_to_bid(
+                action,
+                current_bid=current_bid,
+                own_budget=own_budget,
+                opponent_budget=opponent_budget,
+            )
+            correct = (
+                proposed_bid is None and current_bid >= market_value
+            ) or (
+                proposed_bid is not None
+                and current_bid < proposed_bid <= market_value
+            )
+            calibration_reward = 0.10 if correct else -0.10
         self.aec.step(int(action))
-        reward = self.aec.rewards[self.learner_agent]
+        reward = self.aec.rewards[self.learner_agent] + calibration_reward
         reward += self._play_opponent_turns()
         terminated = self.aec.terminations[self.learner_agent]
-        observation = self.aec.observe(self.learner_agent)
+        observation = self._learner_observation()
         info = {
             "winner": self.aec.winner,
             "scores": dict(self.aec.scores),

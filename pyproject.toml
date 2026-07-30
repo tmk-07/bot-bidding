@@ -33,6 +33,7 @@ train = [
 [project.scripts]
 item-auction = "item_auction.cli:main"
 item-auction-train-baseline = "item_auction.rl.baseline_training:main"
+item-auction-train-deal-value = "item_auction.rl.deal_value_training:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

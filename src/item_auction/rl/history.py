@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS training_runs (
     completed_at TEXT,
     status TEXT NOT NULL,
     algorithm TEXT NOT NULL,
+    learner_family TEXT NOT NULL DEFAULT 'iterated',
     total_timesteps INTEGER NOT NULL,
     seed INTEGER NOT NULL,
     model_path TEXT,
@@ -120,6 +121,19 @@ class TrainingHistory:
         connection.execute("PRAGMA foreign_keys = ON")
         try:
             connection.executescript(SCHEMA)
+            columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(training_runs)"
+                ).fetchall()
+            }
+            if "learner_family" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE training_runs
+                    ADD COLUMN learner_family TEXT NOT NULL DEFAULT 'iterated'
+                    """
+                )
             yield connection
             connection.commit()
         finally:
@@ -132,20 +146,22 @@ class TrainingHistory:
         total_timesteps: int,
         seed: int,
         config: dict[str, Any],
+        learner_family: str = "iterated",
     ) -> str:
         run_id = uuid.uuid4().hex[:12]
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT INTO training_runs (
-                    id, created_at, status, algorithm, total_timesteps, seed,
-                    config_json
-                ) VALUES (?, ?, 'running', ?, ?, ?, ?)
+                    id, created_at, status, algorithm, learner_family,
+                    total_timesteps, seed, config_json
+                ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     datetime.now(UTC).isoformat(),
                     algorithm,
+                    learner_family,
                     total_timesteps,
                     seed,
                     json.dumps(config, sort_keys=True),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import secrets
 import sys
 from pathlib import Path
@@ -396,12 +397,34 @@ with training_tab:
             "`item-auction-train-baseline --timesteps 100000`."
         )
     else:
+        family_names = {
+            "iterated": "Iterated RL Bot",
+            "deal-value": "Deal-Value RL Bot",
+        }
+        available_families = list(
+            dict.fromkeys(
+                run.get("learner_family", "iterated") for run in runs
+            )
+        )
+        selected_family = st.selectbox(
+            "Learner",
+            available_families,
+            format_func=lambda value: family_names.get(
+                value, value.replace("-", " ").title()
+            ),
+        )
+        family_runs = [
+            run
+            for run in runs
+            if run.get("learner_family", "iterated") == selected_family
+        ]
         run_labels = {
             (
                 f"{run['created_at'][:19].replace('T', ' ')} · "
+                f"{json.loads(run['config_json']).get('training_phase', 'context').replace('-', ' ').title()} · "
                 f"{run['algorithm']} · {run['status']} · {run['id']}"
             ): run["id"]
-            for run in runs
+            for run in family_runs
         }
         selected_run_label = st.selectbox("Training run", list(run_labels))
         selected_run = run_labels[selected_run_label]
