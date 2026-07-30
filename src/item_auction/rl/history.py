@@ -501,6 +501,52 @@ class TrainingHistory:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def pricing_behavior(
+        self,
+        run_id: str,
+        checkpoint_steps: int,
+    ) -> list[dict[str, Any]]:
+        """Aggregate auction prices and learner offers into ten-point bands."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT CASE
+                           WHEN s.rating >= 90 THEN '90-100'
+                           WHEN s.rating < 10 THEN '1-9'
+                           ELSE printf(
+                               '%d-%d',
+                               CAST(s.rating / 10 AS INTEGER) * 10,
+                               CAST(s.rating / 10 AS INTEGER) * 10 + 9
+                           )
+                       END AS rating_band,
+                       CASE
+                           WHEN s.rating >= 90 THEN 90
+                           WHEN s.rating < 10 THEN 1
+                           ELSE CAST(s.rating / 10 AS INTEGER) * 10
+                       END AS band_start,
+                       COUNT(*) AS items,
+                       ROUND(AVG(s.final_bid), 2) AS avg_final_price,
+                       ROUND(AVG(s.learner_final_offer), 2)
+                           AS avg_learner_offer,
+                       ROUND(AVG(
+                           CASE WHEN s.winner_role = 'learner'
+                                THEN s.final_bid END
+                       ), 2) AS avg_price_when_won,
+                       ROUND(100.0 * AVG(
+                           CASE WHEN s.winner_role = 'learner'
+                                THEN 1.0 ELSE 0.0 END
+                       ), 1) AS learner_win_pct
+                FROM selections s
+                JOIN evaluation_games g ON g.id = s.game_id
+                WHERE g.run_id = ? AND g.checkpoint_steps = ?
+                GROUP BY rating_band, band_start
+                ORDER BY band_start
+                """,
+                (run_id, checkpoint_steps),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def selections(
         self,
         run_id: str,

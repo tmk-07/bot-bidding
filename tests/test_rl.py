@@ -203,10 +203,13 @@ def test_training_history_records_players_and_every_selection(tmp_path) -> None:
     summary = history.player_summary(run_id, 10)
     selections = history.selections(run_id, 10)
     ratings = history.rating_summary(run_id, 10)
+    pricing = history.pricing_behavior(run_id, 10)
 
     assert len(summary) == 2
     assert len(selections) == 2
     assert sum(row["items"] for row in ratings) == 2
+    assert sum(row["items"] for row in pricing) == 2
+    assert all("avg_learner_offer" in row for row in pricing)
     assert selections[0]["winner"] in {"RL Bot", "rating-noise", "Unsold"}
     assert rating_band(100) == "100"
     assert rating_band(9) == "1-9"

@@ -249,6 +249,40 @@ def family_evolution_rows(
     return rows
 
 
+def family_pricing_rows(
+    history: TrainingHistory,
+    runs: list[dict],
+) -> list[dict]:
+    """Return final-checkpoint pricing behavior for every usable session."""
+
+    usable_runs = sorted(
+        (
+            run
+            for run in runs
+            if run["status"] in {"completed", "truncated"}
+        ),
+        key=lambda run: run["created_at"],
+    )
+    rows: list[dict] = []
+    for run_number, run in enumerate(usable_runs, start=1):
+        checkpoints = history.checkpoints(run["id"])
+        if not checkpoints:
+            continue
+        checkpoint = checkpoints[-1]
+        config = json.loads(run["config_json"])
+        phase = config.get("training_phase", "context").replace("-", " ").title()
+        for row in history.pricing_behavior(run["id"], checkpoint):
+            rows.append(
+                {
+                    **row,
+                    "session": f"{run_number}. {phase}",
+                    "run_id": run["id"],
+                    "checkpoint_steps": checkpoint,
+                }
+            )
+    return rows
+
+
 with st.sidebar:
     st.markdown("### Game setup")
     st.markdown(
@@ -547,6 +581,83 @@ with training_tab:
                 .properties(height=320)
             )
             st.altair_chart(evolution_chart, use_container_width=True)
+        pricing_rows = family_pricing_rows(training_history, family_runs)
+        if pricing_rows:
+            st.markdown("##### Pricing behavior across sessions")
+            st.caption(
+                "Compares the final checkpoint from each completed session. "
+                "Final auction price is the clearing price; learner final offer "
+                "is the highest amount the RL bot actually bid before the "
+                "auction ended."
+            )
+            pricing_measures = {
+                "Final auction price": (
+                    "avg_final_price",
+                    "Average final price",
+                ),
+                "Learner final offer": (
+                    "avg_learner_offer",
+                    "Average learner offer",
+                ),
+                "Price when learner won": (
+                    "avg_price_when_won",
+                    "Average price paid",
+                ),
+            }
+            pricing_choice = st.selectbox(
+                "Pricing measure",
+                list(pricing_measures),
+                key=f"pricing-{selected_family}",
+            )
+            pricing_field, pricing_label = pricing_measures[pricing_choice]
+            pricing_frame = pd.DataFrame(pricing_rows)
+            pricing_chart = (
+                alt.Chart(pricing_frame)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(
+                        "rating_band:N",
+                        title="Item rating",
+                        sort=[
+                            "1-9",
+                            "10-19",
+                            "20-29",
+                            "30-39",
+                            "40-49",
+                            "50-59",
+                            "60-69",
+                            "70-79",
+                            "80-89",
+                            "90-100",
+                        ],
+                    ),
+                    y=alt.Y(f"{pricing_field}:Q", title=pricing_label),
+                    color=alt.Color("session:N", title="Session"),
+                    tooltip=[
+                        alt.Tooltip("session:N", title="Session"),
+                        alt.Tooltip("run_id:N", title="Run"),
+                        alt.Tooltip(
+                            "checkpoint_steps:Q",
+                            title="Final checkpoint",
+                            format=",",
+                        ),
+                        alt.Tooltip("rating_band:N", title="Rating"),
+                        alt.Tooltip(
+                            f"{pricing_field}:Q",
+                            title=pricing_label,
+                            format=".2f",
+                        ),
+                        alt.Tooltip("items:Q", title="Items"),
+                        alt.Tooltip(
+                            "learner_win_pct:Q",
+                            title="RL won %",
+                            format=".1f",
+                        ),
+                    ],
+                )
+                .properties(height=340)
+            )
+            st.altair_chart(pricing_chart, use_container_width=True)
         run_labels = {
             (
                 f"{run['created_at'][:19].replace('T', ' ')} · "

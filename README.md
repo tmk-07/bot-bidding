@@ -169,7 +169,9 @@ separate from **Iterated RL Bot**.
 The Training tab also combines every completed, non-superseded run into a
 family-level evolution chart. Its cumulative-decision timeline can display win
 credit, score, items drafted, or budget used while retaining the individual
-session colors and checkpoint tooltips.
+session colors and checkpoint tooltips. A second cross-session chart compares
+final auction prices, learner offers, or prices paid when the learner won
+across ten-point rating ranges.
 
 ## Command-line quick start
 
