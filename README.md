@@ -1,111 +1,166 @@
-# Item Auction
+# Bot Bidding — Auction Strategy Lab
 
-A sequential auction environment for training bots to divide a pool of **20
-items** with **$500 per player**. Items have ratings from 1–100 and are revealed
-one at a time, so agents cannot inspect the future pool.
+A sequential auction game and reinforcement-learning environment for building, training, and comparing bidding strategies.
 
-Each bot submits its maximum bid for the current item. The highest bidder wins
-and pays one more than the second-highest bid (up to its own bid), which
-efficiently reproduces the outcome of an ascending English auction. The game
-reserves enough cash for every bot to buy its remaining roster slots for at
-least $1.
+**Repository:** [github.com/tmk-07/bot-bidding](https://github.com/tmk-07/bot-bidding)
 
-## Visual dashboard
+## Overview
 
-The easiest way to explore the simulation is the local Streamlit dashboard:
+I built this project to explore how different strategies perform in a sequential auction where future items are unknown.
+
+How the game works  Two players receive a $500 budget and bid on 20 items. Each item has a rating from 1–100, and items are revealed one at a time without replacement. Players can see the current item, bids, budgets, scores, and auction history—but cannot see upcoming items. The team with the highest sum of item ratings is the winner.
+
+The project includes:
+
+- A playable Streamlit game
+- A shared auction engine
+- Scripted bidding strategies
+- Reinforcement-learning environments
+- PPO training and evaluation
+- Frozen checkpoint opponents
+- Historical performance and behavior analysis
+
+## Features
+
+- Play against multiple trained and scripted bots
+- 20 sequentially revealed items
+- Unique ratings sampled without replacement
+- $500 budget for each player
+- Turn-by-turn ascending bidding
+- Hidden future auction pool
+- Shared engine for gameplay and training
+- Gymnasium and PettingZoo environments
+- MaskablePPO reinforcement-learning support
+- Fixed evaluation leagues
+- Best-checkpoint promotion
+- SQLite training-history storage
+- Win-rate, score, budget, roster, pricing, and action analysis
+- Rating-band price comparisons
+- Individual auction and selection history
+
+## Technical Architecture
+
+The project uses one canonical `AuctionEngine` for both the playable Streamlit game and RL simulations. This keeps bidding rules, budgets, scoring, item generation, and auction resolution consistent across every part of the project.
+
+The RL system wraps the engine with:
+
+- A PettingZoo AEC environment for turn-based multi-agent interaction
+- A Gymnasium environment for training one learner against a fixed opponent
+- Legal-action masks for budget-aware bidding
+- Configurable scripted and frozen-checkpoint opponents
+- MaskablePPO for reinforcement-learning experiments
+
+Training runs are evaluated against fixed held-out opponent leagues. Every evaluation stores results in SQLite, including player scores, budgets, drafted items, final prices, offers, winners, and learner actions.
+
+## Technology
+
+- Python
+- Streamlit
+- Gymnasium
+- PettingZoo
+- Stable-Baselines3
+- SB3 Contrib MaskablePPO
+- NumPy
+- Pandas
+- Altair
+- SQLite
+- Pytest
+- GitHub
+
+## Project Structure
+
+```text
+.
+├── data/
+│   └── training_history.sqlite3    # Local training and evaluation history
+├── examples/
+│   └── rl_environment.py           # Example RL environment usage
+├── models/                         # Trained checkpoints and active models
+├── src/
+│   └── item_auction/
+│       ├── core.py                 # Canonical auction engine
+│       ├── duel.py                 # Human-versus-bot game controller
+│       ├── environment.py          # General simulation environment
+│       ├── models.py               # Shared auction data models
+│       └── rl/
+│           ├── actions.py          # Budget-aware RL action definitions
+│           ├── env.py              # PettingZoo and Gymnasium wrappers
+│           ├── opponents.py        # Scripted and trained bot adapters
+│           ├── baseline_training.py
+│           ├── deal_value_training.py
+│           └── history.py          # SQLite evaluation storage
+├── tests/                          # Engine, controller, and RL tests
+├── streamlit_app.py                # Game and analytics dashboard
+├── pyproject.toml                  # Package and dependency configuration
+└── README.md                       # Project documentation
+```
+
+## Running the App
+
+Create a virtual environment and install the project:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[ui,train,dev]'
+```
+
+Start the Streamlit application:
+
+```bash
 streamlit run streamlit_app.py
 ```
 
-Streamlit prints a local address, normally
-[`http://localhost:8501`](http://localhost:8501), and usually opens it in your
-browser automatically. Stop it with `Ctrl+C` in the terminal.
+Open the local address printed by Streamlit, normally:
 
-The dashboard's primary mode is a head-to-head blind auction:
-
-- choose the promoted Iterated Bot or Deal-Value Bot as your opponent;
-- exactly 20 sequentially revealed items rated from 1–100;
-- $500 starting budgets and no mandated roster split;
-- turn-by-turn ascending bids: raise the visible price or pass;
-- live budgets, rosters, scores, and completed auction history;
-
-The trained opponent receives the same observation fields and legal-action
-mask used during evaluation. Changing the opponent starts a fresh draft, and
-neither player receives information about upcoming items.
-
-`MarketPressurePolicy` is the generalist opponent. It treats visible rating as
-the neutral reservation price, then makes a bounded adjustment from public
-score and budget pressure per remaining item. It uses the same rule against
-every opponent and has no access to opponent identity. On a held-out
-500-game-per-opponent benchmark, Market Generalist v1 earned 59.1% win credit
-against Iterated Bot v5, 65.4% against Deal-Value Bot v2, and 52.2% against
-Rating Exact. The last matchup is effectively near-even because exact
-rating-value bidding is close to the fair-price equilibrium of the current
-game.
-
-Default pools are sampled without replacement: all 20 ratings are unique within
-a draft. Custom engine pools also require unique item IDs.
-
-## RL environment
-
-Install the environment dependencies:
-
-```bash
-pip install -e '.[rl,dev]'
+```text
+http://localhost:8501
 ```
 
-`item_auction.core.AuctionEngine` is the canonical turn-based engine used by
-both the Streamlit game and all RL wrappers. `AuctionAECEnv` exposes that same
-engine through PettingZoo, while `FixedOpponentEnv` is a Gymnasium adapter that
-automatically plays opponent turns, making it suitable for a single learning
-policy.
+Stop the app with `Ctrl+C`.
 
-The observation contains the current rating, current bid, both remaining
-budgets, both scores and roster sizes, items remaining, leader state, recent
-prices, and a legal-action mask. It never contains future item values.
+## Current Bots
 
-The 13 actions include pass, minimum raise, percentage targets based on the
-acting bot's remaining budget, percentage targets based on the opponent's
-remaining budget, and an opponent-all-in-plus-$1 target.
+### Market Generalist v1
 
-Five baseline opponents are included:
+Uses the visible rating as a fair-price anchor and makes small adjustments based on:
 
-- `RatingNoisePolicy`: bids up to rating ±10%;
-- `BudgetProportionPolicy`: bids up to rating percent of remaining budget ±10%;
-- `AggressiveHighValuePolicy`: spends heavily above rating 70;
-- `RandomPassPolicy`: randomly passes or raises;
-- `DealProbabilityPolicy`: raise probability increases with rating-to-price value.
+- Score difference
+- Budget difference
+- Auctions remaining
+- Current market price
 
-`OpponentPool` stores factories rather than live objects, so every episode gets
-fresh policy state. Add a trained checkpoint later through `CallablePolicy`:
+It applies the same strategy to every opponent and does not know which strategy it is facing.
 
-```python
-pool.add(
-    "ppo-v1",
-    lambda: CallablePolicy(
-        "ppo-v1",
-        lambda observation, mask: my_model_predict(observation, mask),
-    ),
-)
-```
+### Iterated Bot v5
 
-See [`examples/rl_environment.py`](examples/rl_environment.py) for a complete
-environment-only episode.
+A MaskablePPO policy trained through several opponent leagues and frozen-checkpoint curricula. It uses the complete public game state to select among legal budget-aware actions.
 
-## Baseline RL training
+### Deal-Value Bot v2
+
+A MaskablePPO policy originally trained around price discovery. It evaluates the current deal relative to item value, then adjusts for budgets, scores, rosters, and remaining auctions.
+
+### Scripted Strategies
+
+The environment also includes:
+
+- Rating Exact
+- Rating Noise
+- Budget Proportion
+- Aggressive High Value
+- Deal Probability
+- Random Pass
+- Market Pressure
+
+## Training a Bot
 
 Install the training dependencies:
 
 ```bash
-pip install -e '.[ui,train,dev]'
+pip install -e '.[train,dev]'
 ```
 
-Train MaskablePPO against the four structured opponents. The deliberately
-unstructured `RandomPassPolicy` is not part of this curriculum:
+Run baseline PPO training:
 
 ```bash
 item-auction-train-baseline \
@@ -115,192 +170,76 @@ item-auction-train-baseline \
   --environments 8
 ```
 
-The model is saved under `models/`. Periodic held-out evaluation results are
-written to `data/training_history.sqlite3`. The Training tab in Streamlit shows
-checkpoint progress, average score, items drafted, budget used, rating-band
-prices and ownership, plus every individual evaluation selection. Training
-rollout transitions are intentionally not written to SQLite because synchronous
-disk writes would substantially slow PPO.
-
-By default, PPO collects 1,024 learner decisions in each of 8 parallel
-environments before updating the policy. That is 8,192 decisions, or roughly
-32 complete 20-item auction games, per update. Adjust this aggregation with
-`--rollout-steps` and `--environments`; `--batch-size` must evenly divide their
-product.
-
-For serious comparisons, keep the evaluation league fixed even when the
-training curriculum changes. `--eval-opponents`, `--eval-frozen-model`, and
-`--eval-frozen-name` define that held-out league. The trainer evaluates the
-unchanged starting policy at step 0 and every checkpoint afterward, which
-makes promotion a direct comparison rather than a judgment based on rollout
-reward.
-
-The stabilized league-training defaults can be overridden explicitly:
+Train against a custom opponent curriculum:
 
 ```bash
 item-auction-train-baseline \
-  --learning-rate 0.0001 \
-  --ent-coef 0.005 \
-  --target-kl 0.02 \
-  --n-epochs 10 \
-  --reward-mode value-guided
-```
-
-`value-guided` retains the game-result reward while adding a small dense signal
-for bidding below an item's visible rating and avoiding bids above it. The
-`incremental` learner action mode restricts a newly trained learner to pass or
-raise by $1, but it should not be applied directly to a checkpoint trained with
-the full action space: that changes the policy's action semantics. Frozen
-opponents always retain the action space with which they were trained.
-
-Each run records its promoted checkpoint separately from its final checkpoint.
-The Training dashboard defaults to the promoted model while keeping later
-checkpoints available for overfitting analysis.
-
-Continue a learner from an existing checkpoint while training against an
-immutable copy of that checkpoint and selected scripted opponents:
-
-```bash
-item-auction-train-baseline \
-  --timesteps 150000 \
-  --opponents rating-noise deal-probability \
-  --start-model models/baseline-PREVIOUS_RUN.zip \
-  --frozen-model models/baseline-PREVIOUS_RUN.zip
-```
-
-Use `--frozen-name "Frozen Bot v1"` alongside each `--frozen-model` to give
-checkpoint opponents readable names in training history. Runs can be grouped
-in the dashboard with `--learner-family`.
-
-New evaluations also store every learner decision. The dashboard plots action
-mix, items drafted, and budget usage across checkpoints so behavioral changes
-can be compared with win rate and score changes.
-
-Custom curricula can combine exact-rating and noisy-rating variants with
-explicit episode weights:
-
-```bash
-item-auction-train-baseline \
-  --opponents rating-exact rating-noise-5 rating-noise-20 deal-probability \
+  --opponents market-pressure rating-exact rating-noise-20 \
+  --opponent-weight market-pressure=0.50 \
   --opponent-weight rating-exact=0.30 \
-  --opponent-weight rating-noise-5=0.30 \
-  --opponent-weight rating-noise-20=0.30 \
-  --opponent-weight deal-probability=0.10
+  --opponent-weight rating-noise-20=0.20 \
+  --timesteps 300000
 ```
 
-Weights are sampling probabilities after normalization. Available rating
-curricula include exact rating, ±5%, the original ±10%, and ±20%.
-
-## Deal-value training
-
-Train a separate two-stage learner:
+A saved PPO model can also be included as a frozen opponent:
 
 ```bash
-item-auction-train-deal-value \
-  --calibration-timesteps 100000 \
-  --context-timesteps 200000
+item-auction-train-baseline \
+  --start-model models/active-iterated.zip \
+  --frozen-model models/active-iterated.zip \
+  --frozen-name "Frozen Iterated Bot"
 ```
 
-The calibration phase hides match context and adds a dense price-discovery
-signal: bids at or below the item's rating are rewarded, while bids beyond that
-rating are penalized. The second phase restores budgets, scores, roster state,
-items remaining, and recent prices, then continues against the four opponents
-from the original curriculum. Both phases use the same 8,192-decision PPO
-rollout default. Streamlit groups these runs under **Deal-Value RL Bot**,
-separate from **Iterated RL Bot**.
+## Evaluation and Promotion
 
-The Training tab also combines every completed, non-superseded run into a
-family-level evolution chart. Its cumulative-decision timeline can display win
-credit, score, items drafted, or budget used while retaining the individual
-session colors and checkpoint tooltips. A second cross-session chart compares
-final auction prices, learner offers, or prices paid when the learner won
-across ten-point rating ranges.
+Every training run evaluates the unchanged starting policy at step zero and then evaluates periodic checkpoints against a fixed held-out league.
 
-## Command-line quick start
+Tracked metrics include:
 
-No runtime dependencies are required:
+- Win credit
+- Average total score
+- Average score margin
+- Items drafted
+- Budget used
+- Final auction prices
+- Learner and opponent offers
+- Rating-band ownership
+- Action distribution
+- Individual selections
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+The final checkpoint is not promoted automatically. The best checkpoint must outperform the current active model without creating unacceptable regressions against important opponents.
 
-item-auction simulate --seed 42
-item-auction train --generations 20 --population 24 --episodes 30
-```
+Superseded runs remain available for historical analysis.
 
-Run the tests with:
+## Testing
+
+Run the complete test suite with:
 
 ```bash
-pip install -e '.[dev]'
 pytest
 ```
 
-## Environment API
+The tests cover:
 
-```python
-from item_auction import AuctionConfig, SequentialAuctionEnv
+- Auction rules
+- Budget accounting
+- Item uniqueness
+- Human-versus-bot interactions
+- Legal action masks
+- Scripted policies
+- RL environment compliance
+- Training-history storage
+- Checkpoint promotion
+- Policy evaluation
 
-env = SequentialAuctionEnv(
-    ["bot-a", "bot-b", "bot-c", "bot-d"],
-    AuctionConfig(budget=250, roster_size=5, pool_size=30),
-)
-observations = env.reset(seed=42)
+## GitHub Workflow
 
-while not env.done:
-    bids = {
-        name: my_policy(observation)
-        for name, observation in observations.items()
-    }
-    observations, auction, done = env.step(bids)
+Typical update workflow:
 
-result = env.result()
+```bash
+git add .
+git commit -m "Update auction environment"
+git push
 ```
 
-An observation includes only:
-
-- the currently revealed item and its visible value;
-- the bot's own cash and roster;
-- opponents' public cash, roster size, and score;
-- completed auction history;
-- legal bid and game-progress information.
-
-It never includes the remaining item sequence.
-
-## Included bots and training
-
-- `ValueBot`: a hand-built baseline balancing item quality, budget pace, and
-  late-game urgency.
-- `RandomBot`: a reproducible weak baseline.
-- `LinearBot`: a small serializable policy using observation-only features.
-- `train_policy`: dependency-free evolutionary training against three different
-  `ValueBot` personalities.
-
-Training writes a JSON policy that can be loaded with
-`item_auction.training.load_policy`. The environment's explicit
-`reset`/`step` interface also makes it straightforward to wrap for Gymnasium or
-plug into PPO/DQN later.
-
-## Custom items, categories, and uncertainty
-
-Pass your own list of `Item` objects to `SequentialAuctionEnv` or `play_game`.
-See [`examples/custom_items.py`](examples/custom_items.py).
-
-```python
-Item(
-    id="mystery-box",
-    name="Mystery Box",
-    value=91,       # final score; hidden while this item is being bid on
-    estimate=70,    # value shown to bots during the auction
-    category="tech",
-)
-```
-
-`category` is already part of every item. `estimate` can differ from the true
-`value`; the current observation contains a safe `RevealedItem` without the
-true value, so uncertainty experiments do not require an environment rewrite.
-The true value is considered realized once the completed auction enters the
-public history.
-Future category scoring can be added by replacing the score aggregation in
-`SequentialAuctionEnv.result()` or by computing a custom reward from the
-returned rosters.
+Training databases and model checkpoints are stored locally by default and excluded from Git because they can become large.
